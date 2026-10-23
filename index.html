@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mirino di campo</title>
+<style>
+/* Strumento da campo: alto contrasto per la luce del sole; giallo = direzione di scatto (G), viola = torri visibili */
+:root{
+  --bg:#f4f5f0; --fg:#111511; --muted:#5b6157; --card:#ffffff; --line:#cfd3c8;
+  --g:#d49a00; --wtg:#8a2be2; --ok:#1a8f3c; --warn:#c2410c; --cone:rgba(212,154,0,.16);
+  --mono:ui-monospace,"Roboto Mono",Menlo,monospace; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f120f; --fg:#eef0ea; --muted:#9aa194; --card:#1a1e1a; --line:#333a31;
+  --g:#ffc21a; --wtg:#c084fc; --ok:#4ade80; --warn:#fb923c; --cone:rgba(255,194,26,.14); color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.4 var(--sans)}
+body{padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:10px}
+header{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+h1{font-size:15px;margin:0;letter-spacing:.06em;text-transform:uppercase}
+select,button,input{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+select{flex:1;min-width:0}
+button{cursor:pointer}
+button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.big{font:700 34px/1.1 var(--mono);font-variant-numeric:tabular-nums}
+.lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+#istr{font:700 20px/1.2 var(--sans);text-align:center;padding:10px;border-radius:10px;background:var(--card);border:2px solid var(--line)}
+#istr.ok{border-color:var(--ok);color:var(--ok)}
+#vista{position:relative;flex:1;min-height:260px;border-radius:12px;overflow:hidden;background:var(--card);border:1px solid var(--line)}
+#vista video,#vista canvas{position:absolute;inset:0;width:100%;height:100%}
+#vista video{object-fit:cover}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left}
+th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+#avvio{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column;justify-content:center;gap:14px;padding:24px}
+#avvio p{margin:0;max-width:34em}
+#avvio button:disabled{opacity:.4}
+#avvio button{font-size:18px;padding:14px;background:var(--g);color:#111;border:0;font-weight:700}
+small{color:var(--muted)}
+/* fotocamera a schermo intero: inquadratura sotto, comandi e indicazioni sopra */
+body.full{overflow:hidden}
+body.full #vista{position:fixed;inset:0;z-index:15;border:0;border-radius:0;min-height:0;background:#000}
+body.full header,body.full .grid,body.full #istr,body.full #hudFov{position:fixed;z-index:16;left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right))}
+body.full header{top:max(10px,env(safe-area-inset-top))}
+body.full .grid{top:calc(max(10px,env(safe-area-inset-top)) + 54px)}
+body.full #hudFov{bottom:calc(max(12px,env(safe-area-inset-bottom)) + 64px);display:flex;justify-content:center;gap:8px;align-items:center}
+body.full #istr{bottom:max(12px,env(safe-area-inset-bottom))}
+body.full header h1,body.full .lbl,body.full .big{color:#fff;text-shadow:0 1px 3px #000}
+body.full .card,body.full select,body.full button,body.full #istr,body.full #hudFov span{background:rgba(0,0,0,.55);color:#fff;border-color:rgba(255,255,255,.35)}
+body.full .card{padding:6px 10px}
+body.full .big{font-size:26px}
+body.full #istr.ok{background:rgba(26,143,60,.85);color:#fff;border-color:#4ade80}
+#hudFov span{border:1px solid transparent;border-radius:8px;padding:8px 10px;font-variant-numeric:tabular-nums}
+#hudFov button{min-width:48px;font-weight:700}
+</style>
+</head>
+<body>
+<div id="avvio">
+  <h1>Mirino di campo</h1>
+  <p>Seleziona il punto di scatto: la pagina ti guida fino al punto con il GPS e poi indica dove puntare la fotocamera (giallo = baricentro G, viola = torri visibili).</p>
+  <p><small>Tieni il telefono in verticale con la fotocamera verso il paesaggio. Lontano da auto, guardrail e tralicci, che disturbano la bussola. Se la direzione sembra sbagliata, muovi il telefono disegnando un "8" in aria per calibrarla.</small></p>
+  <button id="btnAvvio">Attiva bussola e GPS</button>
+  <div id="boxDati" class="card" hidden>
+    <p class="lbl" style="margin:0 0 6px">Dati del progetto</p>
+    <p id="statoDati" style="margin:0 0 8px">Nessun progetto caricato.</p>
+    <label for="fileDati" style="display:block;margin-bottom:6px">Carica <b>Sopralluogo_dati.json</b> esportato dal plugin (resta salvato su questo telefono):</label>
+    <input id="fileDati" type="file" accept=".json,application/json">
+  </div>
+</div>
+
+<header>
+  <h1>Mirino</h1>
+  <select id="punto" aria-label="Punto di scatto"></select>
+  <button id="btnCam">Fotocamera</button>
+</header>
+
+<div class="grid">
+  <div class="card"><div class="lbl">Bussola</div><div class="big" id="head">---</div></div>
+  <div class="card"><div class="lbl">Verso G</div><div class="big" id="azg">---</div></div>
+  <div class="card"><div class="lbl">Dal punto</div><div class="big" id="dist">---</div></div>
+</div>
+
+<div id="istr">In attesa della bussola…</div>
+<div id="errCam" class="card" hidden style="border-color:var(--warn);color:var(--warn)"></div>
+<div id="hudFov" hidden>
+  <button id="fovMeno" aria-label="Riduci campo">−</button>
+  <span id="fovTxt">Campo 50°</span>
+  <button id="fovPiu" aria-label="Aumenta campo">+</button>
+</div>
+
+<div id="vista">
+  <video id="video" playsinline muted hidden></video>
+  <canvas id="cv"></canvas>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <span class="lbl">Torri visibili da questo punto (azimut magnetico, da usare con la bussola)</span>
+  </div>
+  <div style="overflow-x:auto"><table id="tab"></table></div>
+</div>
+
+<div class="card row">
+  <label class="lbl" for="decl">Declinazione °E</label>
+  <input id="decl" type="number" step="0.1" style="width:6em">
+  <label class="lbl" for="fov">Campo fotocamera °</label>
+  <input id="fov" type="number" step="1" style="width:5em" value="50">
+  <small>Azimut geografici calcolati dal plugin (Nord vero); la bussola del telefono indica il Nord magnetico.</small>
+</div>
+
+<script>
+let DATI = /*__DATI__*/null;
+
+const $ = id => document.getElementById(id);
+const wrap = a => ((a % 360) + 360) % 360;
+const delta = (a, b) => { let d = wrap(a - b); return d > 180 ? d - 360 : d; };
+const R = 6371008.8, rad = Math.PI / 180;
+
+function bearing(lat1, lon1, lat2, lon2) {
+  const p1 = lat1 * rad, p2 = lat2 * rad, dl = (lon2 - lon1) * rad;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return wrap(Math.atan2(y, x) / rad);
+}
+function distanza(lat1, lon1, lat2, lon2) {
+  const a = Math.sin((lat2 - lat1) * rad / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin((lon2 - lon1) * rad / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+let heading = null, hs = 0, hc = 0, pos = null, punto = null, allineato = false;
+let decl = DATI ? DATI.declinazione : 0;
+let comfort = DATI ? (DATI.comfort || 60) : 60;
+
+/* ---- bussola: direzione della fotocamera posteriore ---------------- */
+function headingDa(e) {
+  if (typeof e.webkitCompassHeading === 'number') return e.webkitCompassHeading; // iOS
+  if (e.alpha == null) return null;
+  const a = e.alpha * rad, b = (e.beta || 0) * rad, g = (e.gamma || 0) * rad;
+  // vettore "dietro al telefono" (fotocamera) nel sistema Est-Nord-Su
+  const E = -Math.cos(a) * Math.sin(g) - Math.sin(a) * Math.sin(b) * Math.cos(g);
+  const N = -Math.sin(a) * Math.sin(g) + Math.cos(a) * Math.sin(b) * Math.cos(g);
+  if (Math.hypot(E, N) > 0.35) return wrap(Math.atan2(E, N) / rad);
+  // telefono quasi orizzontale: si usa il lato superiore dello schermo
+  const ang = (screen.orientation && screen.orientation.angle) || 0;
+  return wrap(360 - e.alpha + ang);
+}
+function onOrient(e) {
+  const h = headingDa(e);
+  if (h == null) return;
+  // media mobile sulle componenti (gestisce il passaggio 359° -> 0°)
+  hs = hs * 0.8 + Math.sin(h * rad) * 0.2;
+  hc = hc * 0.8 + Math.cos(h * rad) * 0.2;
+  heading = wrap(Math.atan2(hs, hc) / rad);
+}
+async function avviaSensori() {
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission)
+      await DeviceOrientationEvent.requestPermission();
+  } catch (e) {}
+  if ('ondeviceorientationabsolute' in window) window.addEventListener('deviceorientationabsolute', onOrient);
+  else window.addEventListener('deviceorientation', onOrient);
+  if (navigator.geolocation)
+    navigator.geolocation.watchPosition(p => { pos = p.coords; },
+      () => { $('dist').textContent = 'no GPS'; },
+      { enableHighAccuracy: true, maximumAge: 2000 });
+  try { await navigator.wakeLock.request('screen'); } catch (e) {}
+  $('avvio').hidden = true;
+}
+
+/* ---- fotocamera ------------------------------------------------------ */
+let stream = null;
+async function toggleCam() {
+  const v = $('video');
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop()); stream = null;
+    v.hidden = true; document.body.classList.remove('full'); $('hudFov').hidden = true;
+    $('btnCam').classList.remove('on'); $('btnCam').textContent = 'Fotocamera';
+    return;
+  }
+  $('errCam').hidden = true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    mostraErroreCam({ name: 'NoMediaDevices', message: 'il browser non espone la fotocamera a questa pagina' });
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    v.srcObject = stream; await v.play(); v.hidden = false;
+    document.body.classList.add('full'); $('hudFov').hidden = false; window.scrollTo(0, 0);
+    $('btnCam').classList.add('on'); $('btnCam').textContent = 'Chiudi';
+  } catch (e) { mostraErroreCam(e); }
+}
+function mostraErroreCam(e) {
+  // messaggio persistente (l'indicazione di rotazione viene riscritta a ogni fotogramma)
+  const cause = {
+    NotAllowedError: 'permesso negato. Chrome: lucchetto/icona a sinistra dell\u2019indirizzo \u2192 Autorizzazioni \u2192 Fotocamera: Consenti. Controlla anche Impostazioni Android \u2192 App \u2192 Chrome \u2192 Autorizzazioni \u2192 Fotocamera.',
+    NotFoundError: 'nessuna fotocamera trovata.',
+    NotReadableError: 'la fotocamera è usata da un\u2019altra app: chiudila e riprova.',
+    OverconstrainedError: 'fotocamera posteriore non disponibile.',
+    NoMediaDevices: 'questo modo di aprire la pagina non permette la fotocamera (pagina aperta come file o in un visualizzatore diverso da Chrome).'
+  };
+  $('errCam').textContent = 'Fotocamera non avviata: ' + (cause[e.name] || (e.name + ' ' + (e.message || ''))) +
+    ' [contesto sicuro: ' + (window.isSecureContext ? 'sì' : 'no') + ', indirizzo: ' + location.protocol + ']';
+  $('errCam').hidden = false;
+}
+function cambiaFov(d) {
+  const f = Math.max(20, Math.min(120, (+$('fov').value || 50) + d));
+  $('fov').value = f; $('fovTxt').textContent = 'Campo ' + f + '°';
+  try { localStorage.setItem('mirino_fov', String(f)); } catch (e) {}
+}
+
+/* ---- dati del punto -------------------------------------------------- */
+function bersagli() {
+  if (!punto) return [];
+  const t = [];
+  if (punto.baricentro) t.push({ nome: 'G', az: punto.baricentro.az, tipo: 'g' });
+  punto.visibili.forEach(v => t.push({ nome: v.id, az: v.az, tipo: 'w', iaf: v.iaf, dist: v.dist }));
+  return t.map(o => ({ ...o, azm: wrap(o.az - decl) }));
+}
+function tabella() {
+  const tb = $('tab');
+  tb.innerHTML = '';
+  if (!punto) return;
+  const h = tb.insertRow(); ['Torre', 'Azimut mag.', 'Nord vero', 'Distanza', 'Visibile'].forEach(s => { const th = document.createElement('th'); th.textContent = s; h.appendChild(th); });
+  if (punto.baricentro) {
+    const r = tb.insertRow();
+    [['G (baricentro)'], [wrap(punto.baricentro.az - decl).toFixed(0) + '°'], [punto.baricentro.az.toFixed(0) + '°'], [punto.baricentro.dist + ' m'], ['']].forEach(c => { r.insertCell().textContent = c[0]; });
+    r.style.fontWeight = '700';
+  }
+  punto.visibili.forEach(v => {
+    const r = tb.insertRow();
+    [v.id, wrap(v.az - decl).toFixed(0) + '°', v.az.toFixed(0) + '°', v.dist + ' m', Math.round(v.iaf * 100) + ' %'].forEach(c => { r.insertCell().textContent = c; });
+  });
+  if (!punto.visibili.length) { const r = tb.insertRow(); r.insertCell().textContent = 'Nessuna torre visibile dal DTM.'; }
+}
+function scegli(i) {
+  punto = DATI.punti[i];
+  try { localStorage.setItem('mirino_punto', String(i)); } catch (e) {}
+  $('azg').textContent = punto.baricentro ? wrap(punto.baricentro.az - decl).toFixed(0) + '°' : '—';
+  tabella();
+}
+
+/* ---- disegno --------------------------------------------------------- */
+const cv = $('cv'), ctx = cv.getContext('2d');
+function colore(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+function disegna() {
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const cG = colore('--g'), cW = colore('--wtg'), cF = colore('--fg'), cOk = colore('--ok');
+  const tg = bersagli();
+
+  // distanza dal punto e istruzione
+  let lontano = false;
+  if (pos && punto) {
+    const d = distanza(pos.latitude, pos.longitude, punto.lat, punto.lon);
+    $('dist').textContent = d < 1000 ? Math.round(d) + ' m' : (d / 1000).toFixed(1) + ' km';
+    lontano = d > Math.max(25, (pos.accuracy || 0) * 1.5);
+  }
+  $('head').textContent = heading == null ? '---' : Math.round(heading) + '°';
+
+  const g = tg.find(t => t.tipo === 'g');
+  const ist = $('istr');
+  if (heading == null) {
+    ist.textContent = 'Bussola non disponibile: usa gli azimut della tabella con la tua bussola.'; ist.className = '';
+  } else if (lontano) {
+    const b = wrap(bearing(pos.latitude, pos.longitude, punto.lat, punto.lon) - decl);
+    const d = delta(b, heading);
+    ist.textContent = 'Raggiungi il punto: ' + (Math.abs(d) < 10 ? 'dritto davanti' : (d > 0 ? 'gira a destra ' : 'gira a sinistra ') + Math.abs(Math.round(d)) + '°');
+    ist.className = '';
+  } else if (g) {
+    const d = delta(g.azm, heading);
+    const ok = Math.abs(d) <= 3;
+    ist.textContent = ok ? 'Allineato: scatta!' : (d > 0 ? 'Ruota a destra ' : 'Ruota a sinistra ') + Math.abs(Math.round(d)) + '°';
+    ist.className = ok ? 'ok' : '';
+    if (ok && !allineato && navigator.vibrate) navigator.vibrate(120);
+    allineato = ok;
+  } else { ist.textContent = 'Nessuna torre visibile da questo punto.'; ist.className = ''; }
+
+  if (heading == null) { requestAnimationFrame(disegna); return; }
+
+  if (stream) {
+    // vista fotocamera: linee verticali sugli azimut dei bersagli
+    const fov = Math.max(20, Math.min(120, +$('fov').value || 50));
+    const k = (W / 2) / Math.tan(fov / 2 * rad);
+    const x = az => { const d = delta(az, heading); return Math.abs(d) < fov / 2 + 5 ? W / 2 + Math.tan(d * rad) * k : null; };
+    if (g) { // cono di comfort
+      const x1 = x(g.azm - comfort / 2), x2 = x(g.azm + comfort / 2);
+      ctx.fillStyle = 'rgba(255,194,26,.12)';
+      ctx.fillRect(x1 == null ? (delta(g.azm - comfort / 2, heading) < 0 ? 0 : W) : x1, 0,
+        (x2 == null ? (delta(g.azm + comfort / 2, heading) > 0 ? W : 0) : x2) - (x1 == null ? (delta(g.azm - comfort / 2, heading) < 0 ? 0 : W) : x1), H);
+    }
+    tg.forEach((t, i) => {
+      const xx = x(t.azm); if (xx == null) return;
+      ctx.strokeStyle = t.tipo === 'g' ? cG : cW; ctx.lineWidth = t.tipo === 'g' ? 4 : 2;
+      ctx.setLineDash(t.tipo === 'g' ? [] : [6, 5]);
+      ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, H); ctx.stroke(); ctx.setLineDash([]);
+      ctx.font = '700 13px system-ui'; ctx.textAlign = 'center';
+      // sotto i comandi in alto e sopra le indicazioni in basso
+      const y = t.tipo === 'g' ? H * 0.62 : 150 + (i % 3) * 18;
+      const w = ctx.measureText(t.nome).width + 8;
+      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(xx - w / 2, y - 12, w, 16);
+      ctx.fillStyle = '#fff'; ctx.fillText(t.nome, xx, y);
+    });
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; // mirino centrale
+    ctx.beginPath(); ctx.moveTo(W / 2, H / 2 - 14); ctx.lineTo(W / 2, H / 2 + 14); ctx.moveTo(W / 2 - 14, H / 2); ctx.lineTo(W / 2 + 14, H / 2); ctx.stroke();
+  } else {
+    // vista bussola: quadrante che ruota, la direzione del telefono è in alto
+    const cx = W / 2, cy = H / 2, r = Math.min(W, H) / 2 - 22;
+    const p = az => { const a = (az - heading - 90) * rad; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
+    ctx.strokeStyle = cF; ctx.globalAlpha = .35; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.stroke(); ctx.globalAlpha = 1;
+    for (let a = 0; a < 360; a += 10) {
+      const a0 = (a - heading - 90) * rad, l = a % 90 === 0 ? 14 : 6;
+      ctx.beginPath(); ctx.moveTo(cx + r * Math.cos(a0), cy + r * Math.sin(a0));
+      ctx.lineTo(cx + (r - l) * Math.cos(a0), cy + (r - l) * Math.sin(a0)); ctx.stroke();
+    }
+    ctx.fillStyle = cF; ctx.font = '700 14px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    [['N', 0], ['E', 90], ['S', 180], ['O', 270]].forEach(([s, a]) => { const a0 = (a - heading - 90) * rad; ctx.fillText(s, cx + (r + 12) * Math.cos(a0), cy + (r + 12) * Math.sin(a0)); });
+    if (g) { // cono di comfort
+      ctx.fillStyle = colore('--cone');
+      ctx.beginPath(); ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, (g.azm - comfort / 2 - heading - 90) * rad, (g.azm + comfort / 2 - heading - 90) * rad);
+      ctx.closePath(); ctx.fill();
+    }
+    let iw = 0;
+    tg.forEach(t => {
+      const [x2, y2] = p(t.azm);
+      ctx.strokeStyle = t.tipo === 'g' ? cG : cW; ctx.lineWidth = t.tipo === 'g' ? 5 : 2;
+      ctx.setLineDash(t.tipo === 'g' ? [] : [5, 4]);
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]);
+      if (t.tipo === 'w') { // etichette sfalsate su tre raggi per non sovrapporsi
+        const f = [0.9, 0.72, 0.54][iw++ % 3];
+        ctx.font = '600 11px system-ui';
+        const lx = cx + (x2 - cx) * f, ly = cy + (y2 - cy) * f, w = ctx.measureText(t.nome).width + 6;
+        ctx.fillStyle = colore('--card'); ctx.fillRect(lx - w / 2, ly - 7, w, 14);
+        ctx.fillStyle = cW; ctx.fillText(t.nome, lx, ly);
+      }
+    });
+    // indice fisso della direzione del telefono
+    ctx.fillStyle = allineato ? cOk : cF;
+    ctx.beginPath(); ctx.moveTo(cx, cy - r - 2); ctx.lineTo(cx - 9, cy - r - 20); ctx.lineTo(cx + 9, cy - r - 20); ctx.closePath(); ctx.fill();
+  }
+  requestAnimationFrame(disegna);
+}
+
+/* ---- avvio ----------------------------------------------------------- */
+// Due modi d'uso: (a) file generato dal plugin con i dati già dentro;
+// (b) pagina pubblicata online (https, necessario per la fotocamera su
+// alcuni browser) in cui si carica il file dati del progetto, salvato poi
+// nel telefono per l'uso senza rete.
+const datiValidi = d => d && d.formato === 'zefiro-campo' && Array.isArray(d.punti) && d.punti.length;
+
+function usaDati(d) {
+  DATI = d;
+  decl = d.declinazione || 0;
+  comfort = d.comfort || 60;
+  $('punto').innerHTML = '';
+  d.punti.forEach((p, i) => { const o = document.createElement('option'); o.value = i; o.textContent = p.id + ' - ' + p.etichetta; $('punto').appendChild(o); });
+  let i0 = 0; try { i0 = +(localStorage.getItem('mirino_punto') || 0); } catch (e) {}
+  if (!(i0 < d.punti.length)) i0 = 0;
+  $('punto').value = i0; scegli(i0);
+  $('decl').value = decl;
+  $('statoDati').textContent = 'Caricato: ' + d.punti.length + ' punti di scatto, ' + (d.turbine || []).length + ' aerogeneratori.';
+  $('btnAvvio').disabled = false;
+}
+
+$('punto').onchange = e => scegli(+e.target.value);
+$('decl').oninput = e => { decl = +e.target.value || 0; if (DATI) scegli(+$('punto').value); };
+$('btnAvvio').onclick = avviaSensori;
+$('btnCam').onclick = toggleCam;
+$('fovMeno').onclick = () => cambiaFov(-1);
+$('fovPiu').onclick = () => cambiaFov(1);
+$('fov').oninput = () => cambiaFov(0);
+try { const f = localStorage.getItem('mirino_fov'); if (f) $('fov').value = f; } catch (e) {}
+cambiaFov(0);
+
+$('fileDati').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      if (!datiValidi(d)) throw new Error('formato');
+      try { localStorage.setItem('mirino_dati', r.result); localStorage.setItem('mirino_punto', '0'); } catch (x) {}
+      usaDati(d);
+    } catch (x) { $('statoDati').textContent = 'File non valido: usa Sopralluogo_dati.json esportato dal plugin.'; }
+  };
+  r.readAsText(f);
+};
+
+if (datiValidi(DATI)) {
+  usaDati(DATI);
+} else {
+  $('boxDati').hidden = false;
+  $('btnAvvio').disabled = true;
+  try { const s0 = localStorage.getItem('mirino_dati'); if (s0) usaDati(JSON.parse(s0)); } catch (e) {}
+}
+requestAnimationFrame(disegna);
+</script>
+</body>
+</html>

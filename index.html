@@ -87,6 +87,11 @@ body.full #nav{display:none}
 #tab-mappa #mappa{height:calc(100vh - 210px);min-height:300px}
 #vista{height:calc(100vh - 360px);min-height:300px;flex:none}
 #ultimoScatto{text-align:center}
+#conferma{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
+#conferma .card{max-width:420px;width:100%}
+#conferma p{margin:6px 0 14px}
+.btnTogli{background:transparent;border:1px solid var(--ok);color:var(--ok);border-radius:8px;padding:4px 8px;font-weight:700}
+#confOk{background:#c62828;color:#fff;border:0}
 #toast{position:fixed;left:50%;bottom:calc(max(16px,env(safe-area-inset-bottom)) + 120px);transform:translateX(-50%);z-index:30;background:rgba(0,0,0,.85);color:#fff;padding:10px 16px;border-radius:20px;font-weight:600;max-width:90vw;text-align:center}
 </style>
 </head>
@@ -175,7 +180,7 @@ body.full #nav{display:none}
     <span id="contaRiep" class="lbl"></span>
   </div>
   <div style="overflow-x:auto;margin-top:6px"><table id="riep"></table></div>
-  <small>Da fare in alto, ordinati per distanza da te. Tocca una riga per selezionare il punto, 🚗 apre il navigatore in auto; sul pulsante tempo e km su strada dalla tua posizione (≈ = stima senza rete).</small>
+  <small>Da fare in alto, ordinati per distanza da te. Tocca una riga per selezionare il punto, ✓ per togliere la spunta (con conferma), 🚗 apre il navigatore in auto; sul pulsante tempo e km su strada dalla tua posizione (≈ = stima senza rete).</small>
 </div>
 
 <div class="card">
@@ -209,6 +214,14 @@ body.full #nav{display:none}
   <small>Il taccuino resta salvato su questo telefono e, se configurato, viene copiato su Google Drive a ogni scatto (quando c'è rete). Esportalo comunque a fine giornata (Sopralluogo_taccuino.geojson) e importalo nel plugin.</small>
 </div>
 </section>
+
+<div id="conferma" hidden>
+  <div class="card">
+    <b id="confTitolo"></b>
+    <p id="confTesto"></p>
+    <div class="row"><button id="confNo" style="flex:1">Annulla</button><button id="confOk" style="flex:1"></button></div>
+  </div>
+</div>
 
 <nav id="nav">
   <button data-tab="mirino" class="on"><span>🧭</span>Mirino</button>
@@ -604,6 +617,35 @@ function mostraTab(nome) {
 }
 document.querySelectorAll('#nav button').forEach(b => { b.onclick = () => mostraTab(b.dataset.tab); });
 
+/* ---- conferma in pagina (i dialoghi del browser possono essere bloccati) */
+function chiediConferma(titolo, testo, ok) {
+  return new Promise(res => {
+    $('confTitolo').textContent = titolo; $('confTesto').textContent = testo; $('confOk').textContent = ok;
+    $('conferma').hidden = false;
+    const chiudi = v => { $('conferma').hidden = true; $('confOk').onclick = $('confNo').onclick = null; res(v); };
+    $('confOk').onclick = () => chiudi(true);
+    $('confNo').onclick = () => chiudi(false);
+  });
+}
+// toglie la spunta di un punto: elimina dal taccuino (e dal Drive) i suoi scatti
+async function togliSpunta(p) {
+  const sc = taccuino.filter(r => r.punto === p.id);
+  if (!sc.length) return;
+  const ok = await chiediConferma('Togliere la spunta a ' + p.id + '?',
+    p.etichetta + ': verrà segnato "da fare" e saranno eliminati dal taccuino ' +
+    (sc.length === 1 ? 'lo scatto registrato' : 'i ' + sc.length + ' scatti registrati') +
+    ' (ultimo alle ' + sc[sc.length - 1].ora_locale.slice(11, 16) + ')' +
+    (cloud.url ? ', anche dal Drive' : '') + '. Le foto nella fotocamera non vengono toccate.',
+    'Togli spunta');
+  if (!ok) return;
+  taccuino = taccuino.filter(r => r.punto !== p.id);
+  salvaTaccuino();
+  if (cloud.url) sc.filter(r => r.sync).forEach(r => inviaCloud({ azione: 'elimina', id: r.id }).catch(() => {}));
+  aggiornaTaccuino();
+  if (punto && punto.id === p.id) scegli(DATI.punti.indexOf(p));
+  toast('○ ' + p.id + ' di nuovo da fare');
+}
+
 /* ---- riepilogo: punti fatti / da fare -------------------------------- */
 // navigazione in auto con Google Maps (sul telefono apre l'app Maps)
 function vaiA(p) {
@@ -682,7 +724,12 @@ function aggiornaRiepilogo(forza) {
   righe.forEach(r => {
     const tr = tb.insertRow(); tr.dataset.i = r.i;
     if (punto && punto.id === r.p.id) tr.className = 'sel';
-    const c0 = tr.insertCell(); c0.textContent = r.n ? '✓' : '○'; c0.className = r.n ? 'st-ok' : 'st-no';
+    const c0 = tr.insertCell(); c0.className = r.n ? 'st-ok' : 'st-no';
+    if (r.n) {               // tocco sulla spunta: toglierla, previa conferma
+      const bt = document.createElement('button'); bt.className = 'btnTogli'; bt.textContent = '✓';
+      bt.title = 'Togli la spunta'; bt.onclick = ev => { ev.stopPropagation(); togliSpunta(r.p); };
+      c0.appendChild(bt);
+    } else c0.textContent = '○';
     const cv = tr.insertCell(); const bv = document.createElement('button');
     bv.className = 'btnVai'; const a = tempiAuto[r.p.id];
     bv.innerHTML = a ? '🚗 ' + (a.stima ? '≈' : '') + durataTesto(a.s) + '<small>' + distTesto(a.m) + '</small>' : '🚗 Vai';

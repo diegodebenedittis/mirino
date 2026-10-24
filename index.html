@@ -68,6 +68,7 @@ body.full .btnFoto{background:rgba(26,143,60,.9)}
 textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%;min-height:3.2em;resize:vertical}
 #registro td{vertical-align:top}
 #avvisoFoto{font-weight:700;color:var(--ok)}
+#toast{position:fixed;left:50%;bottom:calc(max(16px,env(safe-area-inset-bottom)) + 120px);transform:translateX(-50%);z-index:30;background:rgba(0,0,0,.85);color:#fff;padding:10px 16px;border-radius:20px;font-weight:600;max-width:90vw;text-align:center}
 </style>
 </head>
 <body>
@@ -112,6 +113,7 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
 </div>
 
 <div id="istr">In attesa della bussola…</div>
+<div id="toast" hidden role="status"></div>
 <div id="errCam" class="card" hidden style="border-color:var(--warn);color:var(--warn)"></div>
 <div id="hudFov" hidden>
   <button id="fovMeno" aria-label="Riduci campo">−</button>
@@ -216,6 +218,7 @@ function onOrient(e) {
 }
 let sensoriAttivi = false;
 async function avviaSensori() {
+  armaIndietro();
   if (sensoriAttivi) { $('avvio').hidden = true; return; }
   sensoriAttivi = true;
   try {
@@ -231,6 +234,37 @@ async function avviaSensori() {
   try { await navigator.wakeLock.request('screen'); } catch (e) {}
   $('avvio').hidden = true;
 }
+
+
+/* ---- protezione dal tasto Indietro ---------------------------------------
+   Un'uscita accidentale chiuderebbe fotocamera e sensori. Si aggiunge una
+   voce "finta" nella cronologia: il tasto Indietro chiude prima la
+   fotocamera o il pannello impostazioni, poi chiede una conferma (secondo
+   Indietro entro 2 secondi per uscire). Le voci aggiunte valgono solo dopo
+   un tocco dell'utente, per questo si arma all'avvio dei sensori. */
+let trappolaArmata = false, ultimoIndietro = 0, timerToast = null;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(timerToast); timerToast = setTimeout(() => { t.hidden = true; }, 2000);
+}
+function armaIndietro() {
+  if (trappolaArmata) return;
+  try { history.pushState({ mirino: true }, ''); trappolaArmata = true; } catch (e) {}
+}
+window.addEventListener('popstate', () => {
+  trappolaArmata = false;
+  if (stream) { toggleCam(); toast('Fotocamera chiusa'); armaIndietro(); return; }
+  if (sensoriAttivi && !$('avvio').hidden) { $('avvio').hidden = true; armaIndietro(); return; }
+  const ora = Date.now();
+  if (ora - ultimoIndietro < 2000) { history.back(); return; }   // secondo Indietro: esce
+  ultimoIndietro = ora;
+  toast('Premi di nuovo Indietro per uscire dal Mirino');
+  armaIndietro();
+});
+window.addEventListener('beforeunload', e => {
+  if (!sensoriAttivi) return;
+  e.preventDefault(); e.returnValue = '';   // il browser chiede conferma prima di chiudere/ricaricare
+});
 
 /* ---- fotocamera ------------------------------------------------------ */
 let stream = null;
@@ -251,6 +285,7 @@ async function toggleCam() {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
     v.srcObject = stream; await v.play(); v.hidden = false;
     document.body.classList.add('full'); $('hudFov').hidden = false; window.scrollTo(0, 0);
+    armaIndietro();
     $('btnCam').classList.add('on'); $('btnCam').textContent = 'Chiudi';
   } catch (e) { mostraErroreCam(e); }
 }
@@ -696,7 +731,7 @@ $('cloudProva').onclick = async () => {
 };
 $('btnElenco').onclick = elencoProgetti;
 $('btnCaricaProg').onclick = caricaProgetto;
-$('btnImpost').onclick = () => { $('avvio').hidden = false; $('avvio').scrollTop = 0; };
+$('btnImpost').onclick = () => { $('avvio').hidden = false; $('avvio').scrollTop = 0; armaIndietro(); };
 $('fileTacc').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();

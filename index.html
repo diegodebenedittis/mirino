@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Mirino di campo</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 /* Strumento da campo: alto contrasto per la luce del sole; giallo = direzione di scatto (G), viola = torri visibili */
 :root{
@@ -57,6 +59,13 @@ body.full .big{font-size:26px}
 body.full #istr.ok{background:rgba(26,143,60,.85);color:#fff;border-color:#4ade80}
 #hudFov span{border:1px solid transparent;border-radius:8px;padding:8px 10px;font-variant-numeric:tabular-nums}
 #hudFov button{min-width:48px;font-weight:700}
+#mappa{height:300px;border-radius:12px;border:1px solid var(--line);overflow:hidden;background:var(--card)}
+#mappaMsg{padding:12px}
+.btnFoto{background:var(--ok);color:#fff;border:0;font-weight:700;font-size:17px;padding:12px 16px}
+body.full .btnFoto{background:rgba(26,143,60,.9)}
+textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%;min-height:3.2em;resize:vertical}
+#registro td{vertical-align:top}
+#avvisoFoto{font-weight:700;color:var(--ok)}
 </style>
 </head>
 <body>
@@ -91,11 +100,40 @@ body.full #istr.ok{background:rgba(26,143,60,.85);color:#fff;border-color:#4ade8
   <button id="fovMeno" aria-label="Riduci campo">−</button>
   <span id="fovTxt">Campo 50°</span>
   <button id="fovPiu" aria-label="Aumenta campo">+</button>
+  <button id="btnFoto2" class="btnFoto">📷 Foto fatta</button>
 </div>
 
 <div id="vista">
   <video id="video" playsinline muted hidden></video>
   <canvas id="cv"></canvas>
+</div>
+
+<div id="mappa"><div id="mappaMsg" class="lbl">Mappa: serve la connessione internet.</div></div>
+<div class="row">
+  <button id="mapSat" class="on">Satellite</button>
+  <button id="mapOsm">OpenStreetMap</button>
+  <button id="mapSegui" class="on">Segui posizione</button>
+</div>
+
+<div class="card" id="taccuino">
+  <div class="row" style="justify-content:space-between">
+    <span class="lbl">Taccuino del sopralluogo</span>
+    <span id="contaFoto" class="lbl"></span>
+  </div>
+  <label for="nota" class="lbl" style="display:block;margin:8px 0 4px">Nota (facoltativa: obiettivo, numero file Nikon, condizioni…)</label>
+  <textarea id="nota"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="btnFoto" class="btnFoto">📷 Foto fatta</button>
+    <span id="avvisoFoto"></span>
+  </div>
+  <div style="overflow-x:auto;margin-top:8px"><table id="registro"></table></div>
+  <div class="row" style="margin-top:8px">
+    <button id="btnEsporta">Esporta taccuino</button>
+    <label class="lbl" for="fileTacc" style="cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:8px 10px">Importa taccuino
+      <input id="fileTacc" type="file" accept=".json,.geojson,application/json" hidden></label>
+    <button id="btnCancUltimo">Annulla ultimo</button>
+  </div>
+  <small>Il taccuino resta salvato su questo telefono. Esportalo a fine giornata (Sopralluogo_taccuino.geojson) e importalo nel plugin.</small>
 </div>
 
 <div class="card">
@@ -242,7 +280,10 @@ function scegli(i) {
   punto = DATI.punti[i];
   try { localStorage.setItem('mirino_punto', String(i)); } catch (e) {}
   $('azg').textContent = punto.baricentro ? wrap(punto.baricentro.az - decl).toFixed(0) + '°' : '—';
+  $('avvisoFoto').textContent = '';
   tabella();
+  aggiornaTaccuino();
+  disegnaMappa(true);
 }
 
 /* ---- disegno --------------------------------------------------------- */
@@ -352,6 +393,162 @@ function disegna() {
   requestAnimationFrame(disegna);
 }
 
+
+/* ---- taccuino del sopralluogo ------------------------------------------ */
+// Ogni pressione di "Foto fatta" registra ora locale, posizione GPS reale,
+// distanza dal punto pianificato e direzione del telefono. Nessuna foto viene
+// scattata dalla pagina: le foto sono quelle della fotocamera (es. Nikon),
+// abbinate poi nel plugin confrontando l'ora di scatto (EXIF) con il taccuino.
+let taccuino = [];
+try { taccuino = JSON.parse(localStorage.getItem('mirino_taccuino') || '[]'); } catch (e) { taccuino = []; }
+function salvaTaccuino() { try { localStorage.setItem('mirino_taccuino', JSON.stringify(taccuino)); } catch (e) {} }
+const pad = n => String(n).padStart(2, '0');
+function oraLocale(d) {
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+    pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+function registraFoto() {
+  if (!punto) return;
+  const ora = new Date();
+  const r = {
+    id: ora.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
+    punto: punto.id, etichetta: punto.etichetta,
+    ora_locale: oraLocale(ora), ora_iso: ora.toISOString(),
+    lat: pos ? +pos.latitude.toFixed(7) : null, lon: pos ? +pos.longitude.toFixed(7) : null,
+    acc_m: pos && pos.accuracy != null ? Math.round(pos.accuracy) : null,
+    dist_m: pos ? Math.round(distanza(pos.latitude, pos.longitude, punto.lat, punto.lon)) : null,
+    az_mag: heading == null ? null : Math.round(heading),
+    az_vero: heading == null ? null : Math.round(wrap(heading + decl)),
+    nota: $('nota').value.trim()
+  };
+  taccuino.push(r); salvaTaccuino();
+  $('nota').value = '';
+  if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+  $('avvisoFoto').textContent = '✓ Registrata alle ' + r.ora_locale.slice(11) + (r.lat == null ? ' (senza GPS)' : ' a ' + r.dist_m + ' m dal punto');
+  aggiornaTaccuino();
+}
+function aggiornaTaccuino() {
+  // spunta nel menu dei punti
+  if (DATI) [...$('punto').options].forEach((o, i) => {
+    const p = DATI.punti[i], n = taccuino.filter(r => r.punto === p.id).length;
+    o.textContent = (n ? '✓ ' : '') + p.id + ' - ' + p.etichetta + (n > 1 ? ' (' + n + ')' : '');
+  });
+  const fatti = DATI ? DATI.punti.filter(p => taccuino.some(r => r.punto === p.id)).length : 0;
+  $('contaFoto').textContent = DATI ? fatti + ' / ' + DATI.punti.length + ' punti fatti' : '';
+  const tb = $('registro'); tb.innerHTML = '';
+  const righe = punto ? taccuino.filter(r => r.punto === punto.id) : [];
+  if (!righe.length) { tb.insertRow().insertCell().textContent = 'Nessuno scatto registrato per questo punto.'; }
+  else {
+    const h = tb.insertRow(); ['Ora', 'Dal punto', 'Azimut', 'Nota'].forEach(t => { const th = document.createElement('th'); th.textContent = t; h.appendChild(th); });
+    righe.forEach(r => {
+      const tr = tb.insertRow();
+      [r.ora_locale.slice(11), r.dist_m == null ? '—' : r.dist_m + ' m', r.az_mag == null ? '—' : r.az_mag + '°', r.nota || ''].forEach(c => { tr.insertCell().textContent = c; });
+    });
+  }
+  disegnaMappa();
+}
+function taccuinoGeoJSON() {
+  return {
+    type: 'FeatureCollection', name: 'Sopralluogo_taccuino', formato: 'zefiro-taccuino', versione: 1,
+    features: taccuino.map(r => ({
+      type: 'Feature', properties: r,
+      geometry: r.lat == null ? null : { type: 'Point', coordinates: [r.lon, r.lat] }
+    }))
+  };
+}
+async function esportaTaccuino() {
+  if (!taccuino.length) { $('avvisoFoto').textContent = 'Taccuino vuoto.'; return; }
+  const nome = 'Sopralluogo_taccuino_' + oraLocale(new Date()).slice(0, 10) + '.geojson';
+  const file = new File([JSON.stringify(taccuino.length ? taccuinoGeoJSON() : {}, null, 1)], nome, { type: 'application/geo+json' });
+  try { // condivisione (WhatsApp, email, Drive, Nextcloud...) se disponibile
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: nome }); return; }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function importaTaccuino(testo) {
+  const d = JSON.parse(testo);
+  const nuovi = (d.features ? d.features.map(f => f.properties) : Array.isArray(d) ? d : []).filter(r => r && r.id && r.punto);
+  const noti = new Set(taccuino.map(r => r.id));
+  let n = 0;
+  nuovi.forEach(r => { if (!noti.has(r.id)) { taccuino.push(r); n++; } });
+  taccuino.sort((a, b) => (a.ora_iso || '').localeCompare(b.ora_iso || ''));
+  salvaTaccuino(); aggiornaTaccuino();
+  $('avvisoFoto').textContent = 'Importati ' + n + ' scatti (' + (nuovi.length - n) + ' già presenti).';
+}
+
+/* ---- mappa ------------------------------------------------------------ */
+let mappa = null, livSat = null, livOsm = null, gruppo = null, marcaIo = null, seguiPos = true, ultimoCentro = 0;
+function dest(lat, lon, az, d) {
+  const dr = d / R, a = az * rad, p1 = lat * rad, l1 = lon * rad;
+  const p2 = Math.asin(Math.sin(p1) * Math.cos(dr) + Math.cos(p1) * Math.sin(dr) * Math.cos(a));
+  const l2 = l1 + Math.atan2(Math.sin(a) * Math.sin(dr) * Math.cos(p1), Math.cos(dr) - Math.sin(p1) * Math.sin(p2));
+  return [p2 / rad, l2 / rad];
+}
+function initMappa() {
+  if (typeof L === 'undefined') return; // offline: la mappa non è disponibile
+  $('mappaMsg').remove();
+  mappa = L.map('mappa', { zoomControl: true, attributionControl: true });
+  const esri = 'Tiles &copy; Esri, Maxar, Earthstar Geographics';
+  livSat = L.layerGroup([
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: esri }),
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 })
+  ]);
+  livOsm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+  livSat.addTo(mappa);
+  gruppo = L.layerGroup().addTo(mappa);
+  mappa.on('dragstart', () => { seguiPos = false; $('mapSegui').classList.remove('on'); });
+  $('mapSat').onclick = () => { mappa.removeLayer(livOsm); livSat.addTo(mappa); $('mapSat').classList.add('on'); $('mapOsm').classList.remove('on'); };
+  $('mapOsm').onclick = () => { mappa.removeLayer(livSat); livOsm.addTo(mappa); $('mapOsm').classList.add('on'); $('mapSat').classList.remove('on'); };
+  $('mapSegui').onclick = () => { seguiPos = !seguiPos; $('mapSegui').classList.toggle('on', seguiPos); ultimoCentro = 0; };
+  disegnaMappa(true);
+}
+function disegnaMappa(inquadra) {
+  if (!mappa || !DATI) return;
+  gruppo.clearLayers();
+  const cG = colore('--g'), cW = colore('--wtg');
+  (DATI.turbine || []).forEach(t => L.circleMarker([t.lat, t.lon], { radius: 4, color: '#fff', weight: 1, fillColor: cW, fillOpacity: 1 }).bindTooltip(t.id).addTo(gruppo));
+  DATI.punti.forEach(p => {
+    const fatto = taccuino.some(r => r.punto === p.id), sel = punto && p.id === punto.id;
+    L.circleMarker([p.lat, p.lon], { radius: sel ? 9 : 6, color: '#fff', weight: 2, fillColor: fatto ? '#1a8f3c' : '#c2410c', fillOpacity: 1 })
+      .bindTooltip(p.id + (fatto ? ' ✓' : ''), { permanent: sel, direction: 'top' }).addTo(gruppo);
+  });
+  if (punto) {
+    punto.visibili.forEach(v => L.polyline([[punto.lat, punto.lon], [v.lat, v.lon]], { color: cW, weight: 2, dashArray: '5 5' }).addTo(gruppo));
+    const g = punto.baricentro;
+    if (g) {
+      const rr = Math.max(g.dist, 500), arco = [[punto.lat, punto.lon]];
+      for (let i = 0; i <= 24; i++) arco.push(dest(punto.lat, punto.lon, g.az - comfort / 2 + comfort * i / 24, rr));
+      L.polygon(arco, { color: cG, weight: 1, fillColor: cG, fillOpacity: .12 }).addTo(gruppo);
+      L.polyline([[punto.lat, punto.lon], [g.lat, g.lon]], { color: cG, weight: 4 }).addTo(gruppo);
+    }
+    taccuino.filter(r => r.punto === punto.id && r.lat != null).forEach(r =>
+      L.circleMarker([r.lat, r.lon], { radius: 4, color: '#1a8f3c', weight: 2, fillOpacity: 0 }).bindTooltip('Scatto ' + r.ora_locale.slice(11)).addTo(gruppo));
+    if (inquadra) mappa.setView([punto.lat, punto.lon], 15);
+  }
+}
+function aggiornaPosizioneMappa() {
+  if (!mappa || !pos) return;
+  const ll = [pos.latitude, pos.longitude];
+  if (!marcaIo) {
+    marcaIo = {
+      acc: L.circle(ll, { radius: pos.accuracy || 10, color: '#2563eb', weight: 1, fillOpacity: .1 }).addTo(mappa),
+      dir: L.polygon([ll, ll, ll], { color: '#2563eb', weight: 0, fillColor: '#2563eb', fillOpacity: .35 }).addTo(mappa),
+      pto: L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#2563eb', fillOpacity: 1 }).addTo(mappa)
+    };
+  }
+  marcaIo.acc.setLatLng(ll).setRadius(pos.accuracy || 10);
+  marcaIo.pto.setLatLng(ll);
+  if (heading != null) {
+    const hv = wrap(heading + decl), r = 60 * Math.pow(2, 16 - mappa.getZoom()) / 2;
+    marcaIo.dir.setLatLngs([ll, dest(ll[0], ll[1], hv - 20, r), dest(ll[0], ll[1], hv + 20, r)]);
+  }
+  const ora = Date.now();
+  if (seguiPos && ora - ultimoCentro > 3000) { mappa.panTo(ll, { animate: true }); ultimoCentro = ora; }
+}
+setInterval(aggiornaPosizioneMappa, 500);
+
 /* ---- avvio ----------------------------------------------------------- */
 // Due modi d'uso: (a) file generato dal plugin con i dati già dentro;
 // (b) pagina pubblicata online (https, necessario per la fotocamera su
@@ -383,6 +580,24 @@ $('fov').oninput = () => cambiaFov(0);
 try { const f = localStorage.getItem('mirino_fov'); if (f) $('fov').value = f; } catch (e) {}
 cambiaFov(0);
 
+$('btnFoto').onclick = registraFoto;
+$('btnFoto2').onclick = registraFoto;
+$('btnEsporta').onclick = esportaTaccuino;
+$('btnCancUltimo').onclick = () => {
+  const i = taccuino.map(r => r.punto).lastIndexOf(punto && punto.id);
+  if (i < 0) return;
+  // conferma in pagina (i dialoghi del browser possono essere bloccati)
+  const b = $('btnCancUltimo');
+  if (b.dataset.conferma !== '1') { b.dataset.conferma = '1'; b.textContent = 'Tocca di nuovo per eliminare'; setTimeout(() => { b.dataset.conferma = ''; b.textContent = 'Annulla ultimo'; }, 3000); return; }
+  taccuino.splice(i, 1); salvaTaccuino(); aggiornaTaccuino();
+  b.dataset.conferma = ''; b.textContent = 'Annulla ultimo';
+};
+$('fileTacc').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { try { importaTaccuino(r.result); } catch (x) { $('avvisoFoto').textContent = 'File taccuino non valido.'; } };
+  r.readAsText(f); e.target.value = '';
+};
 $('fileDati').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();
@@ -404,6 +619,8 @@ if (datiValidi(DATI)) {
   $('btnAvvio').disabled = true;
   try { const s0 = localStorage.getItem('mirino_dati'); if (s0) usaDati(JSON.parse(s0)); } catch (e) {}
 }
+initMappa();
+if (DATI) disegnaMappa(true);
 requestAnimationFrame(disegna);
 </script>
 </body>

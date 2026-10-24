@@ -41,10 +41,10 @@ button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
 td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left}
 th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-#avvio{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column;justify-content:center;gap:14px;padding:24px}
+#avvio{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column;justify-content:flex-start;gap:14px;padding:24px;overflow-y:auto}
 #avvio p{margin:0;max-width:34em}
-#avvio button:disabled{opacity:.4}
-#avvio button{font-size:18px;padding:14px;background:var(--g);color:#111;border:0;font-weight:700}
+#btnAvvio:disabled{opacity:.4}
+#btnAvvio{font-size:18px;padding:14px;background:var(--g);color:#111;border:0;font-weight:700}
 small{color:var(--muted)}
 /* fotocamera a schermo intero: inquadratura sotto, comandi e indicazioni sopra */
 body.full{overflow:hidden}
@@ -76,11 +76,25 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
   <p>Seleziona il punto di scatto: la pagina ti guida fino al punto con il GPS e poi indica dove puntare la fotocamera (giallo = baricentro G, viola = torri visibili).</p>
   <p><small>Tieni il telefono in verticale con la fotocamera verso il paesaggio. Lontano da auto, guardrail e tralicci, che disturbano la bussola. Se la direzione sembra sbagliata, muovi il telefono disegnando un "8" in aria per calibrarla.</small></p>
   <button id="btnAvvio">Attiva bussola e GPS</button>
-  <div id="boxDati" class="card" hidden>
+  <div id="boxDati" class="card">
     <p class="lbl" style="margin:0 0 6px">Dati del progetto</p>
     <p id="statoDati" style="margin:0 0 8px">Nessun progetto caricato.</p>
     <label for="fileDati" style="display:block;margin-bottom:6px">Carica <b>Sopralluogo_dati.json</b> esportato dal plugin (resta salvato su questo telefono):</label>
     <input id="fileDati" type="file" accept=".json,application/json">
+    <p class="lbl" style="margin:12px 0 6px">oppure dal Google Drive</p>
+    <div class="row">
+      <select id="selProg" aria-label="Progetti sul Drive" style="flex:1;min-width:0"><option value="">(configura il Drive qui sotto)</option></select>
+      <button id="btnElenco" type="button">Aggiorna</button>
+      <button id="btnCaricaProg" type="button">Carica</button>
+    </div>
+  <details style="margin-top:10px">
+    <summary class="lbl" style="cursor:pointer">Salvataggio su Google Drive</summary>
+    <label for="cloudUrl" class="lbl" style="display:block;margin:8px 0 4px">Indirizzo dell'app web (Apps Script, termina con /exec)</label>
+    <input id="cloudUrl" type="url" style="width:100%" placeholder="https://script.google.com/macros/s/…/exec">
+    <label for="cloudChiave" class="lbl" style="display:block;margin:8px 0 4px">Chiave</label>
+    <input id="cloudChiave" type="text" style="width:100%" autocomplete="off">
+    <div class="row" style="margin-top:8px"><button id="cloudProva">Salva e prova collegamento</button></div>
+  </details>
   </div>
 </div>
 
@@ -88,6 +102,7 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
   <h1>Mirino</h1>
   <select id="punto" aria-label="Punto di scatto"></select>
   <button id="btnCam">Fotocamera</button>
+  <button id="btnImpost" aria-label="Progetto e impostazioni">⚙</button>
 </header>
 
 <div class="grid">
@@ -136,14 +151,6 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
     <button id="btnCancUltimo">Annulla ultimo</button>
   </div>
   <div class="row" style="margin-top:8px"><span id="statoCloud" class="lbl">☁ Salvataggio online non configurato</span></div>
-  <details style="margin-top:6px">
-    <summary class="lbl" style="cursor:pointer">Salvataggio su Google Drive</summary>
-    <label for="cloudUrl" class="lbl" style="display:block;margin:8px 0 4px">Indirizzo dell'app web (Apps Script, termina con /exec)</label>
-    <input id="cloudUrl" type="url" style="width:100%" placeholder="https://script.google.com/macros/s/…/exec">
-    <label for="cloudChiave" class="lbl" style="display:block;margin:8px 0 4px">Chiave</label>
-    <input id="cloudChiave" type="text" style="width:100%" autocomplete="off">
-    <div class="row" style="margin-top:8px"><button id="cloudProva">Salva e prova collegamento</button></div>
-  </details>
   <small>Il taccuino resta salvato su questo telefono e, se configurato, viene copiato su Google Drive a ogni scatto (quando c'è rete). Esportalo comunque a fine giornata (Sopralluogo_taccuino.geojson) e importalo nel plugin.</small>
 </div>
 
@@ -207,7 +214,10 @@ function onOrient(e) {
   hc = hc * 0.8 + Math.cos(h * rad) * 0.2;
   heading = wrap(Math.atan2(hs, hc) / rad);
 }
+let sensoriAttivi = false;
 async function avviaSensori() {
+  if (sensoriAttivi) { $('avvio').hidden = true; return; }
+  sensoriAttivi = true;
   try {
     if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission)
       await DeviceOrientationEvent.requestPermission();
@@ -529,6 +539,32 @@ async function sincronizza() {
 window.addEventListener('online', sincronizza);
 setInterval(sincronizza, 60000);
 
+
+/* ---- progetti sul Drive (Sopralluogo_dati.json caricato dal plugin) ----- */
+async function elencoProgetti() {
+  const sel = $('selProg');
+  if (!cloud.url) { sel.innerHTML = '<option value="">(configura il Drive qui sotto)</option>'; return; }
+  sel.innerHTML = '<option value="">Caricamento elenco…</option>';
+  try {
+    const j = await inviaCloud({ azione: 'elenco_progetti' });
+    const lista = (j.ok && j.progetti) || [];
+    sel.innerHTML = lista.length ? '' : '<option value="">(nessun progetto sul Drive)</option>';
+    lista.forEach(p => { const o = document.createElement('option'); o.value = p.nome; o.textContent = p.nome + (p.aggiornato ? '  ·  ' + p.aggiornato : ''); sel.appendChild(o); });
+    if (!j.ok) sel.innerHTML = '<option value="">Errore: ' + (j.errore || '') + '</option>';
+  } catch (e) { sel.innerHTML = '<option value="">Drive non raggiungibile</option>'; }
+}
+async function caricaProgetto() {
+  const nome = $('selProg').value;
+  if (!nome) return;
+  $('statoDati').textContent = 'Scarico ' + nome + '…';
+  try {
+    const j = await inviaCloud({ azione: 'scarica_progetto', nome: nome });
+    if (!j.ok || !datiValidi(j.dati)) throw new Error(j.errore || 'dati non validi');
+    try { localStorage.setItem('mirino_dati', JSON.stringify(j.dati)); localStorage.setItem('mirino_punto', '0'); } catch (x) {}
+    usaDati(j.dati); disegnaMappa(true);
+  } catch (e) { $('statoDati').textContent = 'Impossibile caricare il progetto: ' + e.message; }
+}
+
 /* ---- mappa ------------------------------------------------------------ */
 let mappa = null, livSat = null, livOsm = null, gruppo = null, marcaIo = null, seguiPos = true, ultimoCentro = 0;
 function dest(lat, lon, az, d) {
@@ -655,9 +691,12 @@ $('cloudProva').onclick = async () => {
     const j = await inviaCloud({ azione: 'prova' });
     errCloud = j.ok ? '' : (j.errore || 'errore');
     $('statoCloud').textContent = j.ok ? '☁ Collegato al Foglio Google' : '☁ Errore: ' + errCloud;
-    if (j.ok) setTimeout(sincronizza, 800);
+    if (j.ok) { setTimeout(sincronizza, 800); elencoProgetti(); }
   } catch (e) { $('statoCloud').textContent = '☁ Indirizzo non raggiungibile: controlla l\u2019URL /exec e l\u2019accesso "Chiunque"'; }
 };
+$('btnElenco').onclick = elencoProgetti;
+$('btnCaricaProg').onclick = caricaProgetto;
+$('btnImpost').onclick = () => { $('avvio').hidden = false; $('avvio').scrollTop = 0; };
 $('fileTacc').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();
@@ -681,13 +720,13 @@ $('fileDati').onchange = e => {
 if (datiValidi(DATI)) {
   usaDati(DATI);
 } else {
-  $('boxDati').hidden = false;
   $('btnAvvio').disabled = true;
   try { const s0 = localStorage.getItem('mirino_dati'); if (s0) usaDati(JSON.parse(s0)); } catch (e) {}
 }
 initMappa();
 if (DATI) disegnaMappa(true);
 statoCloud(); sincronizza();
+if (cloud.url) elencoProgetti();
 requestAnimationFrame(disegna);
 </script>
 </body>

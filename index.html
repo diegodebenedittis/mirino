@@ -135,7 +135,16 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
       <input id="fileTacc" type="file" accept=".json,.geojson,application/json" hidden></label>
     <button id="btnCancUltimo">Annulla ultimo</button>
   </div>
-  <small>Il taccuino resta salvato su questo telefono. Esportalo a fine giornata (Sopralluogo_taccuino.geojson) e importalo nel plugin.</small>
+  <div class="row" style="margin-top:8px"><span id="statoCloud" class="lbl">☁ Salvataggio online non configurato</span></div>
+  <details style="margin-top:6px">
+    <summary class="lbl" style="cursor:pointer">Salvataggio su Google Drive</summary>
+    <label for="cloudUrl" class="lbl" style="display:block;margin:8px 0 4px">Indirizzo dell'app web (Apps Script, termina con /exec)</label>
+    <input id="cloudUrl" type="url" style="width:100%" placeholder="https://script.google.com/macros/s/…/exec">
+    <label for="cloudChiave" class="lbl" style="display:block;margin:8px 0 4px">Chiave</label>
+    <input id="cloudChiave" type="text" style="width:100%" autocomplete="off">
+    <div class="row" style="margin-top:8px"><button id="cloudProva">Salva e prova collegamento</button></div>
+  </details>
+  <small>Il taccuino resta salvato su questo telefono e, se configurato, viene copiato su Google Drive a ogni scatto (quando c'è rete). Esportalo comunque a fine giornata (Sopralluogo_taccuino.geojson) e importalo nel plugin.</small>
 </div>
 
 <div class="card">
@@ -428,6 +437,7 @@ function registraFoto() {
   if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
   $('avvisoFoto').textContent = '✓ Registrata alle ' + r.ora_locale.slice(11) + (r.lat == null ? ' (senza GPS)' : ' a ' + r.dist_m + ' m dal punto');
   aggiornaTaccuino();
+  sincronizza();
 }
 function aggiornaTaccuino() {
   // spunta nel menu dei punti
@@ -448,6 +458,7 @@ function aggiornaTaccuino() {
     });
   }
   disegnaMappa();
+  statoCloud();
 }
 function taccuinoGeoJSON() {
   return {
@@ -477,7 +488,46 @@ function importaTaccuino(testo) {
   taccuino.sort((a, b) => (a.ora_iso || '').localeCompare(b.ora_iso || ''));
   salvaTaccuino(); aggiornaTaccuino();
   $('avvisoFoto').textContent = 'Importati ' + n + ' scatti (' + (nuovi.length - n) + ' già presenti).';
+  sincronizza();
 }
+
+
+/* ---- salvataggio online (Google Fogli via Apps Script) ------------------ */
+// Ogni scatto viene inviato all'app web Apps Script dell'utente, che lo
+// scrive come riga nel suo Foglio Google. Gli scatti non ancora inviati
+// (senza rete) restano in coda e partono appena torna la connessione.
+let cloud = { url: '', chiave: '' }, sincInCorso = false, errCloud = '';
+try { cloud = Object.assign(cloud, JSON.parse(localStorage.getItem('mirino_cloud') || '{}')); } catch (e) {}
+function statoCloud() {
+  const el = $('statoCloud');
+  if (!cloud.url) { el.textContent = '☁ Salvataggio online non configurato'; return; }
+  const tot = taccuino.length, ok = taccuino.filter(r => r.sync).length;
+  el.textContent = errCloud === 'chiave' ? '☁ Drive: chiave non valida' :
+    ok === tot ? '☁ Drive: ' + ok + '/' + tot + ' salvati' :
+    '☁ Drive: ' + (tot - ok) + ' in attesa' + (errCloud ? ' (' + errCloud + ')' : '');
+}
+async function inviaCloud(corpo) {
+  const res = await fetch(cloud.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(Object.assign({ chiave: cloud.chiave, progetto: (DATI && DATI.progetto) || '' }, corpo)) });
+  return res.json();
+}
+async function sincronizza() {
+  if (!cloud.url || sincInCorso) { statoCloud(); return; }
+  const da = taccuino.filter(r => !r.sync);
+  if (!da.length) { errCloud = ''; statoCloud(); return; }
+  sincInCorso = true;
+  try {
+    const j = await inviaCloud({ record: da.map(({ sync, ...r }) => r) });
+    if (j.ok) {
+      const s = new Set(j.salvati || []);
+      taccuino.forEach(r => { if (s.has(r.id)) r.sync = true; });
+      salvaTaccuino(); errCloud = '';
+    } else errCloud = j.errore || 'errore';
+  } catch (e) { errCloud = navigator.onLine ? 'server non raggiungibile' : 'senza rete'; }
+  sincInCorso = false; statoCloud();
+}
+window.addEventListener('online', sincronizza);
+setInterval(sincronizza, 60000);
 
 /* ---- mappa ------------------------------------------------------------ */
 let mappa = null, livSat = null, livOsm = null, gruppo = null, marcaIo = null, seguiPos = true, ultimoCentro = 0;
@@ -591,8 +641,22 @@ $('btnCancUltimo').onclick = () => {
   // conferma in pagina (i dialoghi del browser possono essere bloccati)
   const b = $('btnCancUltimo');
   if (b.dataset.conferma !== '1') { b.dataset.conferma = '1'; b.textContent = 'Tocca di nuovo per eliminare'; setTimeout(() => { b.dataset.conferma = ''; b.textContent = 'Annulla ultimo'; }, 3000); return; }
-  taccuino.splice(i, 1); salvaTaccuino(); aggiornaTaccuino();
+  const tolto = taccuino.splice(i, 1)[0]; salvaTaccuino(); aggiornaTaccuino();
+  if (tolto && tolto.sync && cloud.url) inviaCloud({ azione: 'elimina', id: tolto.id }).catch(() => {});
   b.dataset.conferma = ''; b.textContent = 'Annulla ultimo';
+};
+$('cloudUrl').value = cloud.url; $('cloudChiave').value = cloud.chiave;
+$('cloudProva').onclick = async () => {
+  cloud = { url: $('cloudUrl').value.trim(), chiave: $('cloudChiave').value.trim() };
+  try { localStorage.setItem('mirino_cloud', JSON.stringify(cloud)); } catch (e) {}
+  if (!cloud.url) { statoCloud(); return; }
+  $('statoCloud').textContent = '☁ Prova in corso…';
+  try {
+    const j = await inviaCloud({ azione: 'prova' });
+    errCloud = j.ok ? '' : (j.errore || 'errore');
+    $('statoCloud').textContent = j.ok ? '☁ Collegato al Foglio Google' : '☁ Errore: ' + errCloud;
+    if (j.ok) setTimeout(sincronizza, 800);
+  } catch (e) { $('statoCloud').textContent = '☁ Indirizzo non raggiungibile: controlla l\u2019URL /exec e l\u2019accesso "Chiunque"'; }
 };
 $('fileTacc').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
@@ -623,6 +687,7 @@ if (datiValidi(DATI)) {
 }
 initMappa();
 if (DATI) disegnaMappa(true);
+statoCloud(); sincronizza();
 requestAnimationFrame(disegna);
 </script>
 </body>

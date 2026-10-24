@@ -68,6 +68,25 @@ body.full .btnFoto{background:rgba(26,143,60,.9)}
 textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%;min-height:3.2em;resize:vertical}
 #registro td{vertical-align:top}
 #avvisoFoto{font-weight:700;color:var(--ok)}
+#riep td,#riep th{white-space:nowrap}
+#riep tr.sel td{background:var(--cone)}
+#riep tr[data-i]{cursor:pointer}
+.btnVai{background:#1a73e8;color:#fff;border:0;border-radius:8px;padding:6px 10px;font-weight:700;line-height:1.15}
+.btnVai small{display:block;font-weight:400;font-size:11px;color:#fff;opacity:.9}
+.st-ok{color:var(--ok);font-weight:700}.st-no{color:var(--warn);font-weight:700}
+.tab{display:flex;flex-direction:column;gap:10px}
+body{padding-bottom:calc(max(10px,env(safe-area-inset-bottom)) + 66px)!important}
+#nav{position:fixed;left:0;right:0;bottom:0;z-index:18;display:grid;grid-template-columns:repeat(4,1fr);background:var(--card);border-top:1px solid var(--line);padding:4px max(6px,env(safe-area-inset-right)) max(4px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left))}
+#nav button{border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:1px;font-size:12px;padding:6px 2px;color:var(--muted);position:relative}
+#nav button span{font-size:20px;line-height:1}
+#nav button.on{color:var(--fg);font-weight:700}
+#nav button.on::after{content:"";position:absolute;top:0;left:25%;right:25%;height:3px;border-radius:2px;background:var(--g)}
+#badgePunti{position:absolute;top:2px;right:18%;font-size:10px;background:var(--warn);color:#fff;border-radius:9px;padding:0 5px}
+#badgePunti:empty{display:none}
+body.full #nav{display:none}
+#tab-mappa #mappa{height:calc(100vh - 210px);min-height:300px}
+#vista{height:calc(100vh - 360px);min-height:300px;flex:none}
+#ultimoScatto{text-align:center}
 #toast{position:fixed;left:50%;bottom:calc(max(16px,env(safe-area-inset-bottom)) + 120px);transform:translateX(-50%);z-index:30;background:rgba(0,0,0,.85);color:#fff;padding:10px 16px;border-radius:20px;font-weight:600;max-width:90vw;text-align:center}
 </style>
 </head>
@@ -97,6 +116,13 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
     <div class="row" style="margin-top:8px"><button id="cloudProva">Salva e prova collegamento</button></div>
   </details>
   </div>
+<div class="card row" id="boxImpost">
+  <label class="lbl" for="decl">Declinazione °E</label>
+  <input id="decl" type="number" step="0.1" style="width:6em">
+  <label class="lbl" for="fov">Campo fotocamera °</label>
+  <input id="fov" type="number" step="1" style="width:5em" value="50">
+  <small>Azimut geografici calcolati dal plugin (Nord vero); la bussola del telefono indica il Nord magnetico.</small>
+</div>
 </div>
 
 <header>
@@ -106,15 +132,7 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
   <button id="btnImpost" aria-label="Progetto e impostazioni">⚙</button>
 </header>
 
-<div class="grid">
-  <div class="card"><div class="lbl">Bussola</div><div class="big" id="head">---</div></div>
-  <div class="card"><div class="lbl">Verso G</div><div class="big" id="azg">---</div></div>
-  <div class="card"><div class="lbl">Dal punto</div><div class="big" id="dist">---</div></div>
-</div>
-
-<div id="istr">In attesa della bussola…</div>
 <div id="toast" hidden role="status"></div>
-<div id="errCam" class="card" hidden style="border-color:var(--warn);color:var(--warn)"></div>
 <div id="hudFov" hidden>
   <button id="fovMeno" aria-label="Riduci campo">−</button>
   <span id="fovTxt">Campo 50°</span>
@@ -122,18 +140,53 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
   <button id="btnFoto2" class="btnFoto">📷 Foto fatta</button>
 </div>
 
+<section class="tab" id="tab-mirino">
+<div class="grid">
+  <div class="card"><div class="lbl">Bussola</div><div class="big" id="head">---</div></div>
+  <div class="card"><div class="lbl">Verso G</div><div class="big" id="azg">---</div></div>
+  <div class="card"><div class="lbl">Dal punto</div><div class="big" id="dist">---</div></div>
+</div>
+<div id="istr">In attesa della bussola…</div>
+<div id="errCam" class="card" hidden style="border-color:var(--warn);color:var(--warn)"></div>
 <div id="vista">
   <video id="video" playsinline muted hidden></video>
   <canvas id="cv"></canvas>
 </div>
+<div class="row">
+  <button id="btnFoto3" class="btnFoto" style="flex:1">📷 Foto fatta</button>
+  <button id="btnVai" class="btnVai" title="Navigatore Google Maps verso il punto">🚗 Vai</button>
+</div>
+<div id="ultimoScatto" class="lbl"></div>
+</section>
 
+<section class="tab" id="tab-mappa" hidden>
 <div id="mappa"><div id="mappaMsg" class="lbl">Mappa: serve la connessione internet.</div></div>
 <div class="row">
   <button id="mapSat" class="on">Satellite</button>
   <button id="mapOsm">OpenStreetMap</button>
   <button id="mapSegui" class="on">Segui posizione</button>
 </div>
+</section>
 
+<section class="tab" id="tab-punti" hidden>
+<div class="card" id="riepilogo">
+  <div class="row" style="justify-content:space-between">
+    <span class="lbl">Riepilogo punti di scatto</span>
+    <span id="contaRiep" class="lbl"></span>
+  </div>
+  <div style="overflow-x:auto;margin-top:6px"><table id="riep"></table></div>
+  <small>Da fare in alto, ordinati per distanza da te. Tocca una riga per selezionare il punto, 🚗 apre il navigatore in auto; sul pulsante tempo e km su strada dalla tua posizione (≈ = stima senza rete).</small>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <span class="lbl">Torri visibili da questo punto (azimut magnetico, da usare con la bussola)</span>
+  </div>
+  <div style="overflow-x:auto"><table id="tab"></table></div>
+</div>
+</section>
+
+<section class="tab" id="tab-taccuino" hidden>
 <div class="card" id="taccuino">
   <div class="row" style="justify-content:space-between">
     <span class="lbl">Taccuino del sopralluogo</span>
@@ -155,21 +208,14 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
   <div class="row" style="margin-top:8px"><span id="statoCloud" class="lbl">☁ Salvataggio online non configurato</span></div>
   <small>Il taccuino resta salvato su questo telefono e, se configurato, viene copiato su Google Drive a ogni scatto (quando c'è rete). Esportalo comunque a fine giornata (Sopralluogo_taccuino.geojson) e importalo nel plugin.</small>
 </div>
+</section>
 
-<div class="card">
-  <div class="row" style="justify-content:space-between">
-    <span class="lbl">Torri visibili da questo punto (azimut magnetico, da usare con la bussola)</span>
-  </div>
-  <div style="overflow-x:auto"><table id="tab"></table></div>
-</div>
-
-<div class="card row">
-  <label class="lbl" for="decl">Declinazione °E</label>
-  <input id="decl" type="number" step="0.1" style="width:6em">
-  <label class="lbl" for="fov">Campo fotocamera °</label>
-  <input id="fov" type="number" step="1" style="width:5em" value="50">
-  <small>Azimut geografici calcolati dal plugin (Nord vero); la bussola del telefono indica il Nord magnetico.</small>
-</div>
+<nav id="nav">
+  <button data-tab="mirino" class="on"><span>🧭</span>Mirino</button>
+  <button data-tab="mappa"><span>🗺️</span>Mappa</button>
+  <button data-tab="punti"><span>📋</span>Punti<b id="badgePunti"></b></button>
+  <button data-tab="taccuino"><span>📓</span>Taccuino</button>
+</nav>
 
 <script>
 let DATI = /*__DATI__*/null;
@@ -277,6 +323,7 @@ async function toggleCam() {
     return;
   }
   $('errCam').hidden = true;
+  if (schedaAttiva !== 'mirino') mostraTab('mirino');
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     mostraErroreCam({ name: 'NoMediaDevices', message: 'il browser non espone la fotocamera a questa pagina' });
     return;
@@ -337,9 +384,12 @@ function scegli(i) {
   try { localStorage.setItem('mirino_punto', String(i)); } catch (e) {}
   $('azg').textContent = punto.baricentro ? wrap(punto.baricentro.az - decl).toFixed(0) + '°' : '—';
   $('avvisoFoto').textContent = '';
+  const sc = taccuino.filter(r => r.punto === punto.id);
+  $('ultimoScatto').textContent = sc.length ? 'Ultimo scatto qui: ' + sc[sc.length - 1].ora_locale.slice(11, 16) + ' (' + sc.length + ' in tutto)' : 'Nessuno scatto registrato per questo punto';
   tabella();
   aggiornaTaccuino();
   disegnaMappa(true);
+  etichettaVai();
 }
 
 /* ---- disegno --------------------------------------------------------- */
@@ -382,7 +432,7 @@ function disegna() {
     allineato = ok;
   } else { ist.textContent = 'Nessuna torre visibile da questo punto.'; ist.className = ''; }
 
-  if (heading == null) { requestAnimationFrame(disegna); return; }
+  if (heading == null || W < 40 || H < 40) { requestAnimationFrame(disegna); return; }  // scheda nascosta
 
   if (stream) {
     // vista fotocamera: linee verticali sugli azimut dei bersagli
@@ -480,7 +530,8 @@ function registraFoto() {
   taccuino.push(r); salvaTaccuino();
   $('nota').value = '';
   if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
-  $('avvisoFoto').textContent = '✓ Registrata alle ' + r.ora_locale.slice(11) + (r.lat == null ? ' (senza GPS)' : ' a ' + r.dist_m + ' m dal punto');
+  const msgFoto = '✓ ' + r.punto + ' registrata alle ' + r.ora_locale.slice(11) + (r.lat == null ? ' (senza GPS)' : ' a ' + r.dist_m + ' m dal punto');
+  $('avvisoFoto').textContent = msgFoto; $('ultimoScatto').textContent = msgFoto; toast(msgFoto);
   aggiornaTaccuino();
   sincronizza();
 }
@@ -504,6 +555,7 @@ function aggiornaTaccuino() {
   }
   disegnaMappa();
   statoCloud();
+  aggiornaRiepilogo(true);
 }
 function taccuinoGeoJSON() {
   return {
@@ -536,6 +588,114 @@ function importaTaccuino(testo) {
   sincronizza();
 }
 
+
+
+
+/* ---- schede (Mirino / Mappa / Punti / Taccuino) ------------------------ */
+let schedaAttiva = 'mirino';
+function mostraTab(nome) {
+  schedaAttiva = nome;
+  ['mirino', 'mappa', 'punti', 'taccuino'].forEach(t => { $('tab-' + t).hidden = t !== nome; });
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === nome));
+  if (nome === 'mappa' && mappa) setTimeout(() => { mappa.invalidateSize(); disegnaMappa(false); }, 60);
+  if (nome === 'punti') { aggiornaRiepilogo(true); aggiornaTempi(); }
+  window.scrollTo(0, 0);
+  try { localStorage.setItem('mirino_tab', nome); } catch (e) {}
+}
+document.querySelectorAll('#nav button').forEach(b => { b.onclick = () => mostraTab(b.dataset.tab); });
+
+/* ---- riepilogo: punti fatti / da fare -------------------------------- */
+// navigazione in auto con Google Maps (sul telefono apre l'app Maps)
+function vaiA(p) {
+  if (!p) return;
+  const url = 'https://www.google.com/maps/dir/?api=1&destination=' + p.lat + ',' + p.lon +
+    '&travelmode=driving&dir_action=navigate';
+  window.open(url, '_blank');
+}
+$('btnVai').onclick = () => vaiA(punto);
+
+/* ---- tempo di percorrenza in auto (OSRM, strade OpenStreetMap) ---------- */
+const tempiAuto = {};          // id punto -> {s: secondi, m: metri, stima: bool}
+let osrmRif = null, osrmInCorso = false;
+function durataTesto(s) {
+  const min = Math.max(1, Math.round(s / 60));
+  return min < 60 ? min + ' min' : Math.floor(min / 60) + ' h ' + String(min % 60).padStart(2, '0');
+}
+function stimaOffline() {           // linea d'aria x 1,35, media 45 km/h
+  DATI.punti.forEach(p => {
+    const m = distanza(pos.latitude, pos.longitude, p.lat, p.lon) * 1.35;
+    tempiAuto[p.id] = { s: m / (45 / 3.6), m, stima: true };
+  });
+}
+function etichettaVai() {
+  const a = punto && tempiAuto[punto.id];
+  $('btnVai').textContent = a ? '🚗 Vai · ' + (a.stima ? '≈' : '') + durataTesto(a.s) : '🚗 Vai';
+}
+async function aggiornaTempi() {
+  if (!DATI || !pos || osrmInCorso) return;
+  const ora = Date.now();
+  // nuovo calcolo solo se mi sono spostato di 300 m o sono passati 3 minuti
+  if (osrmRif && distanza(pos.latitude, pos.longitude, osrmRif.lat, osrmRif.lon) < 300 && ora - osrmRif.t < 180000) return;
+  osrmRif = { lat: pos.latitude, lon: pos.longitude, t: ora };
+  if (!Object.keys(tempiAuto).length) { stimaOffline(); aggiornaRiepilogo(true); etichettaVai(); }
+  osrmInCorso = true;
+  const coord = [[pos.longitude, pos.latitude]].concat(DATI.punti.map(p => [p.lon, p.lat]))
+    .map(c => c[0].toFixed(6) + ',' + c[1].toFixed(6)).join(';');
+  const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const r = await fetch('https://router.project-osrm.org/table/v1/driving/' + coord +
+      '?sources=0&annotations=duration,distance', { signal: ctrl.signal });
+    const d = await r.json();
+    if (d.code !== 'Ok') throw new Error(d.code);
+    DATI.punti.forEach((p, i) => {
+      const s = d.durations[0][i + 1], m = d.distances[0][i + 1];
+      if (s != null && m != null) tempiAuto[p.id] = { s, m, stima: false };
+    });
+  } catch (e) {
+    stimaOffline();                 // niente rete o servizio non raggiungibile
+    osrmRif.t = ora - 120000;        // riprovo tra un minuto
+  } finally { clearTimeout(to); osrmInCorso = false; }
+  aggiornaRiepilogo(true); etichettaVai();
+}
+setInterval(aggiornaTempi, 10000);
+function distTesto(m) { return m == null ? '—' : m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km'; }
+let ultimoRiep = 0;
+function aggiornaRiepilogo(forza) {
+  if (!DATI) return;
+  const ora = Date.now();
+  if (!forza && ora - ultimoRiep < 5000) return;     // le distanze cambiano col GPS: ogni 5 s basta
+  ultimoRiep = ora;
+  const righe = DATI.punti.map((p, i) => {
+    const sc = taccuino.filter(r => r.punto === p.id);
+    const ult = sc[sc.length - 1];
+    return { i, p, n: sc.length, ult,
+      daTe: pos ? distanza(pos.latitude, pos.longitude, p.lat, p.lon) : null };
+  });
+  const fatti = righe.filter(r => r.n).length;
+  $('contaRiep').textContent = fatti + ' fatti · ' + (righe.length - fatti) + ' da fare';
+  $('badgePunti').textContent = righe.length - fatti ? String(righe.length - fatti) : '';
+  righe.sort((a, b) => (a.n > 0) - (b.n > 0) ||
+    (a.n ? (b.ult.ora_iso || '').localeCompare(a.ult.ora_iso || '') : (a.daTe ?? 1e12) - (b.daTe ?? 1e12)));
+  const tb = $('riep'); tb.innerHTML = '';
+  const h = tb.insertRow();
+  ['', 'In auto', 'Punto', 'Stato', 'Scatti', 'Ultimo', 'Da te'].forEach(t => { const th = document.createElement('th'); th.textContent = t; h.appendChild(th); });
+  righe.forEach(r => {
+    const tr = tb.insertRow(); tr.dataset.i = r.i;
+    if (punto && punto.id === r.p.id) tr.className = 'sel';
+    const c0 = tr.insertCell(); c0.textContent = r.n ? '✓' : '○'; c0.className = r.n ? 'st-ok' : 'st-no';
+    const cv = tr.insertCell(); const bv = document.createElement('button');
+    bv.className = 'btnVai'; const a = tempiAuto[r.p.id];
+    bv.innerHTML = a ? '🚗 ' + (a.stima ? '≈' : '') + durataTesto(a.s) + '<small>' + distTesto(a.m) + '</small>' : '🚗 Vai';
+    bv.onclick = ev => { ev.stopPropagation(); vaiA(r.p); }; cv.appendChild(bv);
+    tr.insertCell().textContent = r.p.id + ' - ' + r.p.etichetta;
+    const c2 = tr.insertCell(); c2.textContent = r.n ? 'fatto' : 'da fare'; c2.className = r.n ? 'st-ok' : 'st-no';
+    tr.insertCell().textContent = r.n || '';
+    tr.insertCell().textContent = r.ult ? r.ult.ora_locale.slice(11, 16) + (r.ult.dist_m != null ? ' (' + r.ult.dist_m + ' m)' : '') : '';
+    tr.insertCell().textContent = distTesto(r.daTe);
+    tr.onclick = () => { $('punto').value = r.i; scegli(r.i); mostraTab('mirino'); };
+  });
+}
+setInterval(() => aggiornaRiepilogo(false), 5000);
 
 /* ---- salvataggio online (Google Fogli via Apps Script) ------------------ */
 // Ogni scatto viene inviato all'app web Apps Script dell'utente, che lo
@@ -705,6 +865,7 @@ cambiaFov(0);
 
 $('btnFoto').onclick = registraFoto;
 $('btnFoto2').onclick = registraFoto;
+$('btnFoto3').onclick = registraFoto;
 $('btnEsporta').onclick = esportaTaccuino;
 $('btnCancUltimo').onclick = () => {
   const i = taccuino.map(r => r.punto).lastIndexOf(punto && punto.id);
@@ -762,6 +923,7 @@ initMappa();
 if (DATI) disegnaMappa(true);
 statoCloud(); sincronizza();
 if (cloud.url) elencoProgetti();
+try { const t0 = localStorage.getItem('mirino_tab'); if (t0 && $('tab-' + t0)) mostraTab(t0); } catch (e) {}
 requestAnimationFrame(disegna);
 </script>
 </body>

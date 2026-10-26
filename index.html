@@ -63,6 +63,9 @@ body.full #istr.ok{background:rgba(26,143,60,.85);color:#fff;border-color:#4ade8
 #hudFov button{min-width:48px;font-weight:700}
 #mappa{height:320px;border-radius:12px;border:1px solid var(--line);overflow:hidden;background:var(--card)}
 #mappaMsg{padding:12px}
+.btnRil{flex:1;min-width:30%;color:#fff;border:0;font-weight:700;font-size:15px;padding:12px 6px;border-radius:10px}
+.btnRil span{display:block;font-size:22px}
+#regRil td,#regRil th{white-space:nowrap}
 .btnFoto{background:var(--ok);color:#fff;border:0;font-weight:700;font-size:17px;padding:12px 16px}
 body.full .btnFoto{background:rgba(26,143,60,.9)}
 textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%;min-height:3.2em;resize:vertical}
@@ -193,6 +196,21 @@ body.full #nav{display:none}
 </section>
 
 <section class="tab" id="tab-taccuino" hidden>
+<div class="card" id="rilievi">
+  <div class="row" style="justify-content:space-between">
+    <span class="lbl">Altri rilievi (foto col telefono)</span>
+    <span id="contaRil" class="lbl"></span>
+  </div>
+  <small>Scatta con la fotocamera del telefono e premi la categoria: in QGIS le foto vengono abbinate per ora e posizione e divise per categoria.</small>
+  <textarea id="notaRil" placeholder="Nota (es. attraversamento fosso, SP 12, fonometro LAeq 38 dB(A)…)" style="margin-top:8px"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button class="btnRil" data-cat="area" style="background:#7c3aed"><span>🏗️</span>Area impianto</button>
+    <button class="btnRil" data-cat="cavidotto" style="background:#0e7490"><span>🔌</span>Interferenza cavidotto</button>
+    <button class="btnRil" data-cat="acustica" style="background:#b45309"><span>🔊</span>Misura acustica</button>
+  </div>
+  <div style="overflow-x:auto;margin-top:8px"><table id="regRil"></table></div>
+  <div class="row" style="margin-top:8px"><button id="btnCancRil">Annulla ultimo rilievo</button></div>
+</div>
 <div class="card" id="taccuino">
   <div class="row" style="justify-content:space-between">
     <span class="lbl">Taccuino del sopralluogo</span>
@@ -539,7 +557,7 @@ function registraFoto() {
     dist_m: pos ? Math.round(distanza(pos.latitude, pos.longitude, punto.lat, punto.lon)) : null,
     az_mag: heading == null ? null : Math.round(heading),
     az_vero: heading == null ? null : Math.round(wrap(heading + decl)),
-    nota: $('nota').value.trim()
+    nota: $('nota').value.trim(), categoria: 'paesaggio'
   };
   taccuino.push(r); salvaTaccuino();
   $('nota').value = '';
@@ -549,6 +567,69 @@ function registraFoto() {
   aggiornaTaccuino();
   sincronizza();
 }
+/* ---- altri rilievi: area impianto, interferenze cavidotto, misure acustiche */
+// Nessun Punto di Scatto: codice progressivo per categoria (AREA-01, CAV-01, ACU-01),
+// che passa anche dal foglio Google (colonne punto/etichetta) e da cui il plugin
+// ricava la categoria. Le foto sono quelle del telefono, abbinate in QGIS per ora.
+const CATEGORIE = {
+  area: { nome: 'Area impianto', sigla: 'AREA', colore: '#7c3aed' },
+  cavidotto: { nome: 'Interferenza cavidotto', sigla: 'CAV', colore: '#0e7490' },
+  acustica: { nome: 'Misura acustica', sigla: 'ACU', colore: '#b45309' }
+};
+const DA_SIGLA = { AREA: 'area', CAV: 'cavidotto', ACU: 'acustica' };
+function categoriaDi(r) {
+  if (r.categoria && (CATEGORIE[r.categoria] || r.categoria === 'paesaggio')) return r.categoria;
+  return DA_SIGLA[String(r.punto || '').split('-')[0]] || 'paesaggio';
+}
+const rilieviAltri = () => taccuino.filter(r => categoriaDi(r) !== 'paesaggio');
+function registraRilievo(cat) {
+  const c = CATEGORIE[cat]; if (!c) return;
+  const n = 1 + Math.max(0, ...taccuino.filter(r => categoriaDi(r) === cat)
+    .map(r => parseInt(String(r.punto).split('-')[1], 10) || 0));
+  const ora = new Date();
+  const r = {
+    id: ora.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
+    categoria: cat, punto: c.sigla + '-' + pad(n), etichetta: c.nome,
+    ora_locale: oraLocale(ora), ora_iso: ora.toISOString(),
+    lat: pos ? +pos.latitude.toFixed(7) : null, lon: pos ? +pos.longitude.toFixed(7) : null,
+    acc_m: pos && pos.accuracy != null ? Math.round(pos.accuracy) : null, dist_m: null,
+    az_mag: heading == null ? null : Math.round(heading),
+    az_vero: heading == null ? null : Math.round(wrap(heading + decl)),
+    nota: $('notaRil').value.trim()
+  };
+  taccuino.push(r); salvaTaccuino();
+  $('notaRil').value = '';
+  if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+  toast('✓ ' + r.punto + ' (' + c.nome + ') alle ' + r.ora_locale.slice(11) + (r.lat == null ? ' – senza GPS' : ''));
+  aggiornaTaccuino();
+  sincronizza();
+}
+function aggiornaRilievi() {
+  const altri = rilieviAltri();
+  $('contaRil').textContent = Object.keys(CATEGORIE).map(k =>
+    CATEGORIE[k].sigla + ' ' + altri.filter(r => categoriaDi(r) === k).length).join(' · ');
+  const tb = $('regRil'); tb.innerHTML = '';
+  if (!altri.length) { tb.insertRow().insertCell().textContent = 'Nessun rilievo registrato.'; return; }
+  const h = tb.insertRow(); ['Rilievo', 'Ora', 'GPS', 'Nota'].forEach(t => { const th = document.createElement('th'); th.textContent = t; h.appendChild(th); });
+  altri.slice(-12).reverse().forEach(r => {
+    const tr = tb.insertRow();
+    const c0 = tr.insertCell(); c0.textContent = r.punto; c0.style.color = CATEGORIE[categoriaDi(r)].colore; c0.style.fontWeight = '700';
+    [r.ora_locale.slice(8, 10) + '/' + r.ora_locale.slice(5, 7) + ' ' + r.ora_locale.slice(11, 16), r.acc_m == null ? '—' : '±' + r.acc_m + ' m', r.nota || ''].forEach(c => { tr.insertCell().textContent = c; });
+  });
+}
+async function annullaUltimoRilievo() {
+  const altri = rilieviAltri(); if (!altri.length) return;
+  const u = altri[altri.length - 1];
+  const ok = await chiediConferma('Eliminare ' + u.punto + '?',
+    u.etichetta + ' delle ' + u.ora_locale.slice(11, 16) + (u.nota ? ' (' + u.nota + ')' : '') +
+    (cloud.url ? '. Viene tolto anche dal Drive.' : '.') + ' Le foto del telefono non vengono toccate.', 'Elimina');
+  if (!ok) return;
+  taccuino = taccuino.filter(r => r.id !== u.id); salvaTaccuino();
+  if (u.sync && cloud.url) inviaCloud({ azione: 'elimina', id: u.id }).catch(() => {});
+  aggiornaTaccuino();
+}
+document.querySelectorAll('.btnRil').forEach(b => { b.onclick = () => registraRilievo(b.dataset.cat); });
+
 function aggiornaTaccuino() {
   // spunta nel menu dei punti
   if (DATI) [...$('punto').options].forEach((o, i) => {
@@ -567,6 +648,7 @@ function aggiornaTaccuino() {
       [r.ora_locale.slice(11), r.dist_m == null ? '—' : r.dist_m + ' m', r.az_mag == null ? '—' : r.az_mag + '°', r.nota || ''].forEach(c => { tr.insertCell().textContent = c; });
     });
   }
+  aggiornaRilievi();
   disegnaMappa();
   statoCloud();
   aggiornaRiepilogo(true);
@@ -858,6 +940,9 @@ function disegnaMappa(inquadra) {
       L.circleMarker([r.lat, r.lon], { radius: 4, color: '#1a8f3c', weight: 2, fillOpacity: 0 }).bindTooltip('Scatto ' + r.ora_locale.slice(11)).addTo(gruppo));
     if (inquadra) mappa.setView([punto.lat, punto.lon], 15);
   }
+  rilieviAltri().filter(r => r.lat != null).forEach(r =>
+    L.circleMarker([r.lat, r.lon], { radius: 6, color: '#fff', weight: 2, fillColor: CATEGORIE[categoriaDi(r)].colore, fillOpacity: 1 })
+      .bindTooltip(r.punto + ' ' + r.ora_locale.slice(11, 16) + (r.nota ? ' – ' + r.nota : '')).addTo(gruppo));
 }
 function aggiornaPosizioneMappa() {
   if (!mappa || !pos) return;
@@ -915,6 +1000,7 @@ $('btnFoto').onclick = registraFoto;
 $('btnFoto2').onclick = registraFoto;
 $('btnFoto3').onclick = registraFoto;
 $('btnEsporta').onclick = esportaTaccuino;
+$('btnCancRil').onclick = annullaUltimoRilievo;
 $('btnCancUltimo').onclick = () => {
   const i = taccuino.map(r => r.punto).lastIndexOf(punto && punto.id);
   if (i < 0) return;

@@ -190,6 +190,15 @@ body.full #nav{display:none}
   <small>Da fare in alto, ordinati per distanza da te. Tocca una riga per selezionare il punto, ✓ per togliere la spunta (con conferma), 🚗 apre il navigatore in auto; sul pulsante tempo e km su strada dalla tua posizione (≈ = stima senza rete).</small>
 </div>
 
+<div class="card" id="cardWtg">
+  <div class="row" style="justify-content:space-between">
+    <span class="lbl">Aerogeneratori del progetto</span>
+    <span id="contaWtg" class="lbl"></span>
+  </div>
+  <div style="overflow-x:auto;margin-top:6px"><table id="tabWtg"></table></div>
+  <small>Ordinati per distanza da te. 🚗 apre il navigatore in auto fino alla posizione della turbina (tempo e km su strada).</small>
+</div>
+
 <div class="card">
   <div class="row" style="justify-content:space-between">
     <span class="lbl">Torri visibili da questo punto (azimut magnetico, da usare con la bussola)</span>
@@ -869,10 +878,16 @@ function durataTesto(s) {
   const min = Math.max(1, Math.round(s / 60));
   return min < 60 ? min + ' min' : Math.floor(min / 60) + ' h ' + String(min % 60).padStart(2, '0');
 }
+// destinazioni per il navigatore: punti di scatto e aerogeneratori (chiave 'WTG:<id>')
+function destinazioni() {
+  return DATI.punti.map(p => ({ k: p.id, lat: p.lat, lon: p.lon }))
+    .concat((DATI.turbine || []).map(w => ({ k: 'WTG:' + w.id, lat: w.lat, lon: w.lon })))
+    .slice(0, 99);                    // limite del servizio OSRM pubblico
+}
 function stimaOffline() {           // linea d'aria x 1,35, media 45 km/h
-  DATI.punti.forEach(p => {
+  destinazioni().forEach(p => {
     const m = distanza(pos.latitude, pos.longitude, p.lat, p.lon) * 1.35;
-    tempiAuto[p.id] = { s: m / (45 / 3.6), m, stima: true };
+    tempiAuto[p.k] = { s: m / (45 / 3.6), m, stima: true };
   });
 }
 function etichettaVai() {
@@ -887,7 +902,8 @@ async function aggiornaTempi() {
   osrmRif = { lat: pos.latitude, lon: pos.longitude, t: ora };
   if (!Object.keys(tempiAuto).length) { stimaOffline(); aggiornaRiepilogo(true); etichettaVai(); }
   osrmInCorso = true;
-  const coord = [[pos.longitude, pos.latitude]].concat(DATI.punti.map(p => [p.lon, p.lat]))
+  const dest = destinazioni();
+  const coord = [[pos.longitude, pos.latitude]].concat(dest.map(p => [p.lon, p.lat]))
     .map(c => c[0].toFixed(6) + ',' + c[1].toFixed(6)).join(';');
   const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 10000);
   try {
@@ -895,9 +911,9 @@ async function aggiornaTempi() {
       '?sources=0&annotations=duration,distance', { signal: ctrl.signal });
     const d = await r.json();
     if (d.code !== 'Ok') throw new Error(d.code);
-    DATI.punti.forEach((p, i) => {
+    dest.forEach((p, i) => {
       const s = d.durations[0][i + 1], m = d.distances[0][i + 1];
-      if (s != null && m != null) tempiAuto[p.id] = { s, m, stima: false };
+      if (s != null && m != null) tempiAuto[p.k] = { s, m, stima: false };
     });
   } catch (e) {
     stimaOffline();                 // niente rete o servizio non raggiungibile
@@ -908,11 +924,31 @@ async function aggiornaTempi() {
 setInterval(aggiornaTempi, 10000);
 function distTesto(m) { return m == null ? '—' : m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km'; }
 let ultimoRiep = 0;
+function aggiornaAerogeneratori() {
+  const tb = $('tabWtg'); if (!tb || !DATI) return;
+  const tw = (DATI.turbine || []).map(w => ({ w, daTe: pos ? distanza(pos.latitude, pos.longitude, w.lat, w.lon) : null }));
+  $('cardWtg').hidden = !tw.length;
+  $('contaWtg').textContent = tw.length ? tw.length + ' turbine' : '';
+  tw.sort((a, b) => (a.daTe ?? 1e12) - (b.daTe ?? 1e12) || String(a.w.id).localeCompare(String(b.w.id)));
+  tb.innerHTML = '';
+  const h = tb.insertRow(); ['In auto', 'Turbina', 'Da te'].forEach(x => { const th = document.createElement('th'); th.textContent = x; h.appendChild(th); });
+  tw.forEach(({ w, daTe }) => {
+    const tr = tb.insertRow();
+    const bv = document.createElement('button'); bv.className = 'btnVai';
+    const a = tempiAuto['WTG:' + w.id];
+    bv.innerHTML = a ? '🚗 ' + (a.stima ? '≈' : '') + durataTesto(a.s) + '<small>' + distTesto(a.m) + '</small>' : '🚗 Vai';
+    bv.onclick = () => vaiA(w);
+    tr.insertCell().appendChild(bv);
+    tr.insertCell().textContent = w.id;
+    tr.insertCell().textContent = distTesto(daTe);
+  });
+}
 function aggiornaRiepilogo(forza) {
   if (!DATI) return;
   const ora = Date.now();
   if (!forza && ora - ultimoRiep < 5000) return;     // le distanze cambiano col GPS: ogni 5 s basta
   ultimoRiep = ora;
+  aggiornaAerogeneratori();
   const righe = DATI.punti.map((p, i) => {
     const sc = taccuino.filter(r => r.punto === p.id);
     const ult = sc[sc.length - 1];

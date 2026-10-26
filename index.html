@@ -66,6 +66,9 @@ body.full #istr.ok{background:rgba(26,143,60,.85);color:#fff;border-color:#4ade8
 .btnRil{flex:1;min-width:30%;color:#fff;border:0;font-weight:700;font-size:15px;padding:12px 6px;border-radius:10px}
 .btnRil span{display:block;font-size:22px}
 #regRil td,#regRil th{white-space:nowrap}
+.btnAllega{padding:6px 10px;font-weight:700}
+.mini{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.mini img{width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
 .btnFoto{background:var(--ok);color:#fff;border:0;font-weight:700;font-size:17px;padding:12px 16px}
 body.full .btnFoto{background:rgba(26,143,60,.9)}
 textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%;min-height:3.2em;resize:vertical}
@@ -209,6 +212,8 @@ body.full #nav{display:none}
     <button class="btnRil" data-cat="acustica" style="background:#b45309"><span>🔊</span>Misura acustica</button>
   </div>
   <div style="overflow-x:auto;margin-top:8px"><table id="regRil"></table></div>
+  <input id="fileRil" type="file" accept="image/*" multiple hidden>
+  <small>📎 allega al rilievo le foto della galleria (anche più di una). Con il Drive collegato vengono caricate (ridotte a 2048 px) nella cartella Mirino_foto; in QGIS: «Rilievi dal Drive».</small>
   <div class="row" style="margin-top:8px"><button id="btnCancRil">Annulla ultimo rilievo</button></div>
 </div>
 <div class="card" id="taccuino">
@@ -610,13 +615,107 @@ function aggiornaRilievi() {
     CATEGORIE[k].sigla + ' ' + altri.filter(r => categoriaDi(r) === k).length).join(' · ');
   const tb = $('regRil'); tb.innerHTML = '';
   if (!altri.length) { tb.insertRow().insertCell().textContent = 'Nessun rilievo registrato.'; return; }
-  const h = tb.insertRow(); ['Rilievo', 'Ora', 'GPS', 'Nota'].forEach(t => { const th = document.createElement('th'); th.textContent = t; h.appendChild(th); });
+  const h = tb.insertRow(); ['Rilievo', 'Foto', 'Ora', 'GPS', 'Nota'].forEach(t => { const th = document.createElement('th'); th.textContent = t; h.appendChild(th); });
   altri.slice(-12).reverse().forEach(r => {
     const tr = tb.insertRow();
     const c0 = tr.insertCell(); c0.textContent = r.punto; c0.style.color = CATEGORIE[categoriaDi(r)].colore; c0.style.fontWeight = '700';
+    const cf = tr.insertCell(); const b = document.createElement('button');
+    const nf = (r.foto || []).length;
+    b.className = 'btnAllega'; b.textContent = '📎' + (nf ? ' ' + nf : '');
+    b.onclick = () => { rilDaAllegare = r.id; $('fileRil').value = ''; $('fileRil').click(); };
+    cf.appendChild(b);
+    if (nf) { const m = document.createElement('div'); m.className = 'mini'; cf.appendChild(m); mostraMiniature(r.id, m); }
     [r.ora_locale.slice(8, 10) + '/' + r.ora_locale.slice(5, 7) + ' ' + r.ora_locale.slice(11, 16), r.acc_m == null ? '—' : '±' + r.acc_m + ' m', r.nota || ''].forEach(c => { tr.insertCell().textContent = c; });
   });
 }
+/* foto allegate: nel taccuino solo i NOMI dei file (per l'abbinamento in QGIS);
+   le miniature per l'anteprima restano in IndexedDB su questo telefono */
+let rilDaAllegare = null;
+function apriDbMini() {
+  return new Promise((ok, ko) => {
+    const rq = indexedDB.open('mirino_foto', 2);
+    rq.onupgradeneeded = () => {
+      const db = rq.result;
+      if (!db.objectStoreNames.contains('mini')) db.createObjectStore('mini');
+      if (!db.objectStoreNames.contains('coda')) db.createObjectStore('coda');   // foto da caricare sul Drive
+    };
+    rq.onsuccess = () => ok(rq.result); rq.onerror = () => ko(rq.error);
+  });
+}
+async function leggiMini(id) {
+  try {
+    const db = await apriDbMini();
+    return await new Promise(ok => { const q = db.transaction('mini').objectStore('mini').get(id); q.onsuccess = () => ok(q.result || []); q.onerror = () => ok([]); });
+  } catch (e) { return []; }
+}
+async function scriviMini(id, lista) {
+  try {
+    const db = await apriDbMini();
+    await new Promise(ok => { const tx = db.transaction('mini', 'readwrite'); lista && lista.length ? tx.objectStore('mini').put(lista, id) : tx.objectStore('mini').delete(id); tx.oncomplete = ok; tx.onerror = ok; });
+  } catch (e) {}
+}
+async function mostraMiniature(id, el) {
+  (await leggiMini(id)).forEach(src => { const i = document.createElement('img'); i.src = src; el.appendChild(i); });
+}
+// coda delle foto da caricare sul Drive (JPEG ridotto a 2048 px)
+let fotoInCoda = 0, erroreFoto = '';
+async function dbOp(store, modo, fn) {
+  const db = await apriDbMini();
+  return new Promise(ok => { const tx = db.transaction(store, modo); const q = fn(tx.objectStore(store)); tx.oncomplete = () => ok(q && q.result); tx.onerror = () => ok(null); });
+}
+async function contaCoda() { try { fotoInCoda = (await dbOp('coda', 'readonly', s => s.count())) || 0; } catch (e) {} statoCloud(); }
+async function fotoPerDrive(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 2048 / Math.max(bmp.width, bmp.height)), c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.85).split(',')[1];
+  } catch (e) { return null; }
+}
+let caricoInCorso = false;
+async function caricaFotoCoda() {
+  if (!cloud.url || caricoInCorso || !navigator.onLine) return;
+  caricoInCorso = true;
+  try {
+    const chiavi = (await dbOp('coda', 'readonly', s => s.getAllKeys())) || [];
+    for (const k of chiavi) {
+      const v = await dbOp('coda', 'readonly', s => s.get(k));
+      if (!v) continue;
+      const j = await inviaCloud({ azione: 'carica_foto', id_rilievo: v.rid, punto: v.punto, categoria: v.categoria,
+        nome: v.nome, mime: 'image/jpeg', dati: v.dati });
+      if (j.ok && j.file_id) { await dbOp('coda', 'readwrite', s => s.delete(k)); erroreFoto = ''; }
+      else { erroreFoto = j.ok ? 'aggiorna Codice.gs alla versione 2' : (j.errore || 'errore'); break; }
+    }
+  } catch (e) { erroreFoto = 'server non raggiungibile'; }
+  caricoInCorso = false;
+  contaCoda();
+}
+async function miniatura(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const k = 160 / Math.max(bmp.width, bmp.height), c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.6);
+  } catch (e) { return null; }
+}
+$('fileRil').onchange = async ev => {
+  const r = taccuino.find(x => x.id === rilDaAllegare); const files = [...ev.target.files];
+  if (!r || !files.length) return;
+  const nomi = new Set(r.foto || []), mini = await leggiMini(r.id);
+  for (const f of files) {
+    if (nomi.has(f.name)) continue;
+    nomi.add(f.name);
+    const m = await miniatura(f); if (m) mini.push(m);
+    const dati = await fotoPerDrive(f);
+    if (dati) await dbOp('coda', 'readwrite', s => s.put({ rid: r.id, punto: r.punto, categoria: categoriaDi(r), nome: f.name, dati }, r.id + '|' + f.name));
+  }
+  r.foto = [...nomi]; r.sync = false; salvaTaccuino(); await scriviMini(r.id, mini);
+  toast('📎 ' + files.length + ' foto allegate a ' + r.punto + (cloud.url ? ' – invio al Drive' : ''));
+  aggiornaRilievi();
+  sincronizza();
+};
 async function annullaUltimoRilievo() {
   const altri = rilieviAltri(); if (!altri.length) return;
   const u = altri[altri.length - 1];
@@ -624,7 +723,7 @@ async function annullaUltimoRilievo() {
     u.etichetta + ' delle ' + u.ora_locale.slice(11, 16) + (u.nota ? ' (' + u.nota + ')' : '') +
     (cloud.url ? '. Viene tolto anche dal Drive.' : '.') + ' Le foto del telefono non vengono toccate.', 'Elimina');
   if (!ok) return;
-  taccuino = taccuino.filter(r => r.id !== u.id); salvaTaccuino();
+  taccuino = taccuino.filter(r => r.id !== u.id); salvaTaccuino(); scriviMini(u.id, null);
   if (u.sync && cloud.url) inviaCloud({ azione: 'elimina', id: u.id }).catch(() => {});
   aggiornaTaccuino();
 }
@@ -838,8 +937,9 @@ function statoCloud() {
   if (!cloud.url) { el.textContent = '☁ Salvataggio online non configurato'; return; }
   const tot = taccuino.length, ok = taccuino.filter(r => r.sync).length;
   el.textContent = errCloud === 'chiave' ? '☁ Drive: chiave non valida' :
-    ok === tot ? '☁ Drive: ' + ok + '/' + tot + ' salvati' :
-    '☁ Drive: ' + (tot - ok) + ' in attesa' + (errCloud ? ' (' + errCloud + ')' : '');
+    (ok === tot ? '☁ Drive: ' + ok + '/' + tot + ' salvati' :
+    '☁ Drive: ' + (tot - ok) + ' in attesa' + (errCloud ? ' (' + errCloud + ')' : '')) +
+    (fotoInCoda ? ' · foto da inviare: ' + fotoInCoda + (erroreFoto ? ' (' + erroreFoto + ')' : '') : '');
 }
 async function inviaCloud(corpo) {
   const res = await fetch(cloud.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -849,7 +949,7 @@ async function inviaCloud(corpo) {
 async function sincronizza() {
   if (!cloud.url || sincInCorso) { statoCloud(); return; }
   const da = taccuino.filter(r => !r.sync);
-  if (!da.length) { errCloud = ''; statoCloud(); return; }
+  if (!da.length) { errCloud = ''; statoCloud(); caricaFotoCoda(); return; }
   sincInCorso = true;
   try {
     const j = await inviaCloud({ record: da.map(({ sync, ...r }) => r) });
@@ -860,8 +960,10 @@ async function sincronizza() {
     } else errCloud = j.errore || 'errore';
   } catch (e) { errCloud = navigator.onLine ? 'server non raggiungibile' : 'senza rete'; }
   sincInCorso = false; statoCloud();
+  caricaFotoCoda();
 }
 window.addEventListener('online', sincronizza);
+contaCoda();
 setInterval(sincronizza, 60000);
 
 

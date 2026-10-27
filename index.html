@@ -82,7 +82,7 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
 .st-ok{color:var(--ok);font-weight:700}.st-no{color:var(--warn);font-weight:700}
 .tab{display:flex;flex-direction:column;gap:10px}
 body{padding-bottom:calc(max(10px,env(safe-area-inset-bottom)) + 66px)!important}
-#nav{position:fixed;left:0;right:0;bottom:0;z-index:18;display:grid;grid-template-columns:repeat(4,1fr);background:var(--card);border-top:1px solid var(--line);padding:4px max(6px,env(safe-area-inset-right)) max(4px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left))}
+#nav{position:fixed;left:0;right:0;bottom:0;z-index:18;display:grid;grid-template-columns:repeat(5,1fr);background:var(--card);border-top:1px solid var(--line);padding:4px max(6px,env(safe-area-inset-right)) max(4px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left))}
 #nav button{border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:1px;font-size:12px;padding:6px 2px;color:var(--muted);position:relative}
 #nav button span{font-size:20px;line-height:1}
 #nav button.on{color:var(--fg);font-weight:700}
@@ -93,6 +93,8 @@ body.full #nav{display:none}
 #tab-mappa #mappa{height:calc(100vh - 210px);min-height:300px}
 #vista{height:calc(100vh - 360px);min-height:300px;flex:none}
 #ultimoScatto{text-align:center}
+.vlab{display:block;font-size:13px;color:var(--muted);margin:8px 0 3px}
+#verbaleForm{display:flex;flex-direction:column;gap:10px}
 .btnNota{padding:2px 6px;margin-left:4px;font-size:13px}
 #modNota{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
 #modNota .card{max-width:420px;width:100%}
@@ -251,6 +253,25 @@ body.full #nav{display:none}
 </div>
 </section>
 
+<section class="tab" id="tab-verbale" hidden>
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <span class="lbl">Verbale di sopralluogo tecnico</span>
+    <span id="verbaleProg" class="lbl"></span>
+  </div>
+  <small>Compila in campo: si salva da solo sul telefono e, con il Drive collegato, sul Foglio Google. Il verbale (DOCX + PDF) con la documentazione fotografica di tutte le foto del sopralluogo si genera in QGIS: Matrice → Output → «Verbale di sopralluogo». Per dettare usa il microfono della tastiera.</small>
+  <div class="row" style="margin-top:8px"><span id="statoVerbale" class="lbl"></span></div>
+</div>
+<div id="verbaleForm"></div>
+<div class="card">
+  <div class="row">
+    <button id="btnVerbaleDrive">☁ Carica dal Drive</button>
+    <button id="btnVerbaleNuovo">Nuovo verbale</button>
+  </div>
+  <small>6. Documentazione fotografica: in QGIS, dalle foto del taccuino e degli altri rilievi (area impianto, cavidotto, acustica).</small>
+</div>
+</section>
+
 <div id="modNota" hidden>
   <div class="card">
     <b id="modNotaTitolo">Nota</b>
@@ -272,6 +293,7 @@ body.full #nav{display:none}
   <button data-tab="mappa"><span>🗺️</span>Mappa</button>
   <button data-tab="punti"><span>📋</span>Punti<b id="badgePunti"></b></button>
   <button data-tab="taccuino"><span>📓</span>Taccuino</button>
+  <button data-tab="verbale"><span>📝</span>Verbale</button>
 </nav>
 
 <script>
@@ -844,6 +866,7 @@ function aggiornaTaccuino() {
 function taccuinoGeoJSON() {
   return {
     type: 'FeatureCollection', name: 'Sopralluogo_taccuino', formato: 'zefiro-taccuino', versione: 1,
+    verbale: verbaleCompilato(verbale) ? (({ sync, ...v }) => v)(verbale) : undefined,
     features: taccuino.map(r => ({
       type: 'Feature', properties: r,
       geometry: r.lat == null ? null : { type: 'Point', coordinates: [r.lon, r.lat] }
@@ -851,9 +874,9 @@ function taccuinoGeoJSON() {
   };
 }
 async function esportaTaccuino() {
-  if (!taccuino.length) { $('avvisoFoto').textContent = 'Taccuino vuoto.'; return; }
+  if (!taccuino.length && !verbaleCompilato(verbale)) { $('avvisoFoto').textContent = 'Taccuino vuoto.'; return; }
   const nome = 'Sopralluogo_taccuino_' + oraLocale(new Date()).slice(0, 10) + '.geojson';
-  const file = new File([JSON.stringify(taccuino.length ? taccuinoGeoJSON() : {}, null, 1)], nome, { type: 'application/geo+json' });
+  const file = new File([JSON.stringify(taccuinoGeoJSON(), null, 1)], nome, { type: 'application/geo+json' });
   try { // condivisione (WhatsApp, email, Drive, Nextcloud...) se disponibile
     if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: nome }); return; }
   } catch (e) { if (e.name === 'AbortError') return; }
@@ -868,18 +891,164 @@ function importaTaccuino(testo) {
   nuovi.forEach(r => { if (!noti.has(r.id)) { taccuino.push(r); n++; } });
   taccuino.sort((a, b) => (a.ora_iso || '').localeCompare(b.ora_iso || ''));
   salvaTaccuino(); aggiornaTaccuino();
-  $('avvisoFoto').textContent = 'Importati ' + n + ' scatti (' + (nuovi.length - n) + ' già presenti).';
+  let msgV = '';
+  if (d.verbale && typeof d.verbale === 'object' && !verbaleCompilato(verbale)) {   // verbale del file solo se qui è vuoto
+    verbali[chiaveVerbale()] = Object.assign({}, d.verbale, { progetto: chiaveVerbale(), sync: false });
+    salvaVerbali(); caricaVerbale(); sincVerbale(); msgV = ' Verbale importato.';
+  } else if (d.verbale) msgV = ' Verbale del file ignorato: quello sul telefono è già compilato.';
+  $('avvisoFoto').textContent = 'Importati ' + n + ' scatti (' + (nuovi.length - n) + ' già presenti).' + msgV;
   sincronizza();
 }
 
 
 
 
-/* ---- schede (Mirino / Mappa / Punti / Taccuino) ------------------------ */
+/* ---- verbale di sopralluogo tecnico ------------------------------------
+   Stesse voci del modello "Verbale di Sopralluogo Tecnico" (sezioni 1-5);
+   la sezione 6 (documentazione fotografica) la compone il plugin QGIS con le
+   foto del sopralluogo. Un verbale per progetto, salvato sul telefono, nel
+   taccuino esportato (campo "verbale") e sul Drive (Codice.gs v5). */
+const VERBALE = [
+  { s: 'Intestazione', c: [['tecnico', 'Tecnico incaricato'], ['data', 'Data del sopralluogo', 'date']] },
+  { s: '1. Dati generali', c: [['committente', 'Committente'], ['sito', 'Sito del sopralluogo'],
+    ['coordinate', 'Coordinate geografiche', 'coord'], ['tipologia', 'Tipologia di impianto', 'lista:Eolico|Fotovoltaico|Agrivoltaico|BESS|Eolico + BESS|Stazione elettrica|Cavidotto'],
+    ['meteo', 'Meteo', 'lista:Sereno|Poco nuvoloso|Nuvoloso|Coperto|Pioggia|Nebbia|Vento forte']] },
+  { s: '2. Accessibilità al sito', c: [['strada', 'Strada di accesso'], ['larghezza', 'Larghezza strada'],
+    ['critici', 'Elementi critici', 'testo']] },
+  { s: '3. Descrizione dello stato dei luoghi', c: [['stato_luoghi', 'Stato dei luoghi', 'testo']] },
+  { s: '4. Analisi delle interferenze', c: [['vegetazione', '4.1 Vegetazione presente', 'testo'],
+    ['terreno', '4.2 Stato di manutenzione del terreno', 'testo'], ['idrografia', '4.3 Idrografia', 'testo'],
+    ['linee', '4.4 Presenza di linee elettriche', 'testo'], ['servitu', '4.5 Servitù e vincoli esistenti', 'testo'],
+    ['fauna', '4.6 Presenza di fauna selvatica o domestica', 'testo']] },
+  { s: '5. Valutazioni tecniche e connessione', c: [['esposizione', '5.1 Esposizione', 'testo'],
+    ['acqua_reti', '5.2 Accesso all’acqua e alle reti tecnologiche (pozzi, impianti preesistenti, infrastrutture necessarie…)', 'testo'],
+    ['connessione', '5.3 Distanza dalla rete di connessione', 'testo']] }
+];
+let verbali = {}, verbale = null, timerVerbale = null;
+try { verbali = JSON.parse(localStorage.getItem('mirino_verbali') || '{}'); } catch (e) {}
+const chiaveVerbale = () => (DATI && DATI.progetto) || 'senza_progetto';
+function nuovoVerbale() {
+  let tec = ''; try { tec = localStorage.getItem('mirino_tecnico') || ''; } catch (e) {}
+  return { progetto: chiaveVerbale(), tecnico: tec, data: oraLocale(new Date()).slice(0, 10),
+    tipologia: 'Eolico', aggiornato: '', sync: true };
+}
+function salvaVerbali() { try { localStorage.setItem('mirino_verbali', JSON.stringify(verbali)); } catch (e) {} }
+function verbaleCompilato(v) {
+  return !!v && VERBALE.some(g => g.c.some(([k]) => !['tecnico', 'data', 'tipologia'].includes(k) && String(v[k] || '').trim()));
+}
+// UTM WGS84 (fuso dalla longitudine), come nel modello: "304819 E, 4179861 N – EPSG:32633 – WGS84 / UTM Zona 33N"
+function utm(lat, lon) {
+  const a = 6378137, f = 1 / 298.257223563, k0 = 0.9996, e2 = f * (2 - f), ep2 = e2 / (1 - e2);
+  const zona = Math.floor((lon + 180) / 6) + 1, l0 = ((zona - 1) * 6 - 180 + 3) * rad;
+  const p = lat * rad, l = lon * rad;
+  const N = a / Math.sqrt(1 - e2 * Math.sin(p) ** 2), T = Math.tan(p) ** 2, C = ep2 * Math.cos(p) ** 2;
+  const A = Math.cos(p) * (l - l0);
+  const M = a * ((1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256) * p - (3 * e2 / 8 + 3 * e2 ** 2 / 32 + 45 * e2 ** 3 / 1024) * Math.sin(2 * p)
+    + (15 * e2 ** 2 / 256 + 45 * e2 ** 3 / 1024) * Math.sin(4 * p) - (35 * e2 ** 3 / 3072) * Math.sin(6 * p));
+  const E = k0 * N * (A + (1 - T + C) * A ** 3 / 6 + (5 - 18 * T + T * T + 72 * C - 58 * ep2) * A ** 5 / 120) + 500000;
+  let Nn = k0 * (M + N * Math.tan(p) * (A * A / 2 + (5 - T + 9 * C + 4 * C * C) * A ** 4 / 24 + (61 - 58 * T + T * T + 600 * C - 330 * ep2) * A ** 6 / 720));
+  if (lat < 0) Nn += 10000000;
+  return { E: Math.round(E), N: Math.round(Nn), zona, epsg: (lat < 0 ? 32700 : 32600) + zona };
+}
+function testoCoordinate(lat, lon) {
+  const u = utm(lat, lon);
+  return u.E + ' E, ' + u.N + ' N – EPSG:' + u.epsg + ' – WGS84 / UTM Zona ' + u.zona + (lat < 0 ? 'S' : 'N');
+}
+function costruisciVerbale() {
+  const box = $('verbaleForm'); box.innerHTML = '';
+  VERBALE.forEach(g => {
+    const card = document.createElement('div'); card.className = 'card';
+    const h = document.createElement('div'); h.className = 'lbl'; h.style.fontWeight = '700'; h.textContent = g.s; card.appendChild(h);
+    g.c.forEach(([k, et, tipo]) => {
+      const lab = document.createElement('label'); lab.className = 'vlab'; lab.htmlFor = 'v_' + k; lab.textContent = et; card.appendChild(lab);
+      let el;
+      if (tipo === 'testo') { el = document.createElement('textarea'); el.rows = 2; }
+      else {
+        el = document.createElement('input'); el.type = tipo === 'date' ? 'date' : 'text'; el.style.width = '100%';
+        if (tipo && tipo.startsWith('lista:')) {
+          const dl = document.createElement('datalist'); dl.id = 'dl_' + k;
+          tipo.slice(6).split('|').forEach(x => { const o = document.createElement('option'); o.value = x; dl.appendChild(o); });
+          card.appendChild(dl); el.setAttribute('list', dl.id);
+        }
+      }
+      el.id = 'v_' + k; el.dataset.k = k;
+      el.oninput = () => modificaVerbale(k, el.value);
+      if (tipo === 'coord') {
+        const r = document.createElement('div'); r.className = 'row'; el.style.flex = '1'; el.style.width = 'auto';
+        const b = document.createElement('button'); b.textContent = '📍 Qui'; b.title = 'Usa la posizione GPS attuale';
+        b.onclick = () => {
+          if (!pos) { toast('Posizione GPS non ancora disponibile'); return; }
+          el.value = testoCoordinate(pos.latitude, pos.longitude);
+          verbale.lat = +pos.latitude.toFixed(7); verbale.lon = +pos.longitude.toFixed(7);
+          modificaVerbale('coordinate', el.value);
+        };
+        r.appendChild(el); r.appendChild(b); card.appendChild(r);
+      } else card.appendChild(el);
+    });
+    box.appendChild(card);
+  });
+}
+function caricaVerbale() {
+  const k = chiaveVerbale();
+  if (!verbali[k] && k !== 'senza_progetto' && verbaleCompilato(verbali.senza_progetto)) {   // compilato prima di caricare il progetto
+    verbali[k] = verbali.senza_progetto; delete verbali.senza_progetto; verbali[k].sync = false; salvaVerbali();
+  }
+  verbale = verbali[k] || nuovoVerbale();
+  verbale.progetto = k;
+  document.querySelectorAll('#verbaleForm [data-k]').forEach(el => { el.value = verbale[el.dataset.k] || ''; });
+  $('verbaleProg').textContent = k === 'senza_progetto' ? '(nessun progetto caricato)' : k;
+  statoVerbale();
+}
+function modificaVerbale(k, val) {
+  verbale[k] = val;
+  if (k === 'tecnico') { try { localStorage.setItem('mirino_tecnico', val); } catch (e) {} }
+  verbale.aggiornato = oraLocale(new Date()); verbale.sync = false;
+  verbali[verbale.progetto] = verbale; salvaVerbali(); statoVerbale();
+  clearTimeout(timerVerbale); timerVerbale = setTimeout(sincVerbale, 3000);
+}
+let errVerbale = '';
+function statoVerbale() {
+  const el = $('statoVerbale'); if (!el || !verbale) return;
+  el.textContent = !verbale.aggiornato ? 'Non ancora compilato' :
+    'Salvato sul telefono ' + verbale.aggiornato.slice(11, 16) +
+    (!cloud.url ? '' : verbale.sync ? ' · ☁ sul Drive' : ' · ☁ in attesa' + (errVerbale ? ' (' + errVerbale + ')' : ''));
+}
+async function sincVerbale() {
+  if (!cloud.url || !verbale || verbale.sync || !navigator.onLine) { statoVerbale(); return; }
+  const inviato = verbale.aggiornato;
+  try {
+    const { sync, ...v } = verbale;
+    const j = await inviaCloud({ azione: 'salva_verbale', verbale: v });
+    if (j.ok && j.verbale) { if (verbale.aggiornato === inviato) verbale.sync = true; salvaVerbali(); errVerbale = ''; }
+    else errVerbale = j.ok ? 'aggiorna Codice.gs alla versione 5' : (j.errore || 'errore');
+  } catch (e) { errVerbale = 'server non raggiungibile'; }
+  statoVerbale();
+}
+async function verbaleDalDrive() {
+  if (!cloud.url) { toast('Configura prima il Drive (⚙)'); return; }
+  try {
+    const j = await inviaCloud({ azione: 'leggi_verbale' });
+    if (!j.ok) throw new Error(j.errore || 'errore');
+    if (!j.verbale) { toast('Nessun verbale sul Drive per questo progetto'); return; }
+    if (verbaleCompilato(verbale) && !(await chiediConferma('Sostituire il verbale?',
+      'Il verbale sul telefono (' + (verbale.aggiornato || '').slice(0, 16) + ') viene sostituito da quello del Drive (' +
+      (j.verbale.aggiornato || '').slice(0, 16) + ').', 'Sostituisci'))) return;
+    verbali[chiaveVerbale()] = Object.assign(j.verbale, { progetto: chiaveVerbale(), sync: true });
+    salvaVerbali(); caricaVerbale(); toast('Verbale caricato dal Drive');
+  } catch (e) { toast('Verbale non scaricato: ' + e.message); }
+}
+async function nuovoVerbaleConferma() {
+  if (verbaleCompilato(verbale) && !(await chiediConferma('Nuovo verbale?',
+    'Il verbale attuale viene svuotato (resta il tecnico). Se ti serve, esporta prima il taccuino: contiene anche il verbale.', 'Svuota'))) return;
+  verbali[chiaveVerbale()] = nuovoVerbale(); verbali[chiaveVerbale()].sync = false;
+  salvaVerbali(); caricaVerbale();
+}
+
+/* ---- schede (Mirino / Mappa / Punti / Taccuino / Verbale) --------------- */
 let schedaAttiva = 'mirino';
 function mostraTab(nome) {
   schedaAttiva = nome;
-  ['mirino', 'mappa', 'punti', 'taccuino'].forEach(t => { $('tab-' + t).hidden = t !== nome; });
+  ['mirino', 'mappa', 'punti', 'taccuino', 'verbale'].forEach(t => { $('tab-' + t).hidden = t !== nome; });
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === nome));
   if (nome === 'mappa' && mappa) setTimeout(() => { mappa.invalidateSize(); disegnaMappa(false); }, 60);
   if (nome === 'punti') { aggiornaRiepilogo(true); aggiornaTempi(); }
@@ -1071,6 +1240,7 @@ async function inviaCloud(corpo) {
 async function sincronizza() {
   if (!cloud.url || sincInCorso) { statoCloud(); return; }
   const da = taccuino.filter(r => !r.sync);
+  sincVerbale();
   if (!da.length) { errCloud = ''; statoCloud(); caricaFotoCoda(); return; }
   sincInCorso = true;
   try {
@@ -1208,6 +1378,7 @@ function usaDati(d) {
   $('decl').value = decl;
   $('statoDati').textContent = 'Caricato: ' + d.punti.length + ' punti di scatto, ' + (d.turbine || []).length + ' aerogeneratori.';
   $('btnAvvio').disabled = false;
+  caricaVerbale();
 }
 
 $('punto').onchange = e => scegli(+e.target.value);
@@ -1220,6 +1391,10 @@ $('fov').oninput = () => cambiaFov(0);
 try { const f = localStorage.getItem('mirino_fov'); if (f) $('fov').value = f; } catch (e) {}
 cambiaFov(0);
 
+costruisciVerbale();
+caricaVerbale();
+$('btnVerbaleDrive').onclick = verbaleDalDrive;
+$('btnVerbaleNuovo').onclick = nuovoVerbaleConferma;
 $('btnFoto').onclick = registraFoto;
 $('btnFoto2').onclick = registraFoto;
 $('btnFoto3').onclick = registraFoto;

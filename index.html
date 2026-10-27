@@ -93,6 +93,9 @@ body.full #nav{display:none}
 #tab-mappa #mappa{height:calc(100vh - 210px);min-height:300px}
 #vista{height:calc(100vh - 360px);min-height:300px;flex:none}
 #ultimoScatto{text-align:center}
+.btnNota{padding:2px 6px;margin-left:4px;font-size:13px}
+#modNota{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
+#modNota .card{max-width:420px;width:100%}
 #conferma{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
 #conferma .card{max-width:420px;width:100%}
 #conferma p{margin:6px 0 14px}
@@ -196,7 +199,7 @@ body.full #nav{display:none}
     <span id="contaWtg" class="lbl"></span>
   </div>
   <div style="overflow-x:auto;margin-top:6px"><table id="tabWtg"></table></div>
-  <small>Ordinati per distanza da te. 🚗 apre il navigatore in auto fino alla posizione della turbina (tempo e km su strada).</small>
+  <small>Ordinati per distanza da te. 🚗 apre il navigatore in auto fino alla posizione della turbina (tempo e km su strada). 📷 scatta le foto dell'area impianto di quella turbina (rilievo AREA-&lt;turbina&gt;, visibile anche nel Taccuino).</small>
 </div>
 
 <div class="card">
@@ -216,7 +219,6 @@ body.full #nav{display:none}
   <small>Scatta con la fotocamera del telefono e premi la categoria: in QGIS le foto vengono abbinate per ora e posizione e divise per categoria.</small>
   <textarea id="notaRil" placeholder="Nota (es. attraversamento fosso, SP 12, fonometro LAeq 38 dB(A)…)" style="margin-top:8px"></textarea>
   <div class="row" style="margin-top:8px">
-    <button class="btnRil" data-cat="area" style="background:#7c3aed"><span>🏗️</span>Area impianto</button>
     <button class="btnRil" data-cat="cavidotto" style="background:#0e7490"><span>🔌</span>Interferenza cavidotto</button>
     <button class="btnRil" data-cat="acustica" style="background:#b45309"><span>🔊</span>Misura acustica</button>
   </div>
@@ -248,6 +250,14 @@ body.full #nav{display:none}
   <small>Il taccuino resta salvato su questo telefono e, se configurato, viene copiato su Google Drive a ogni scatto (quando c'è rete). Esportalo comunque a fine giornata (Sopralluogo_taccuino.geojson) e importalo nel plugin.</small>
 </div>
 </section>
+
+<div id="modNota" hidden>
+  <div class="card">
+    <b id="modNotaTitolo">Nota</b>
+    <textarea id="modNotaTesto" style="margin:8px 0;min-height:90px"></textarea>
+    <div class="row"><button id="modNotaNo" style="flex:1">Annulla</button><button id="modNotaOk" style="flex:1;background:var(--ok);color:#fff;border:0">Salva nota</button></div>
+  </div>
+</div>
 
 <div id="conferma" hidden>
   <div class="card">
@@ -637,8 +647,48 @@ function aggiornaRilievi() {
     bc.onclick = () => { rilDaAllegare = r.id; $('camRil').value = ''; $('camRil').click(); };
     cf.appendChild(bc); cf.appendChild(b);
     if (nf) { const m = document.createElement('div'); m.className = 'mini'; cf.appendChild(m); mostraMiniature(r.id, m); }
-    [r.ora_locale.slice(8, 10) + '/' + r.ora_locale.slice(5, 7) + ' ' + r.ora_locale.slice(11, 16), r.acc_m == null ? '—' : '±' + r.acc_m + ' m', r.nota || ''].forEach(c => { tr.insertCell().textContent = c; });
+    [r.ora_locale.slice(8, 10) + '/' + r.ora_locale.slice(5, 7) + ' ' + r.ora_locale.slice(11, 16), r.acc_m == null ? '—' : '±' + r.acc_m + ' m'].forEach(c => { tr.insertCell().textContent = c; });
+    cellaNota(tr, r);
   });
+}
+/* ---- nota modificabile dopo lo scatto (✏️): il record torna da sincronizzare e
+   il foglio Google aggiorna la nota della riga esistente (Codice.gs v4) */
+function cellaNota(tr, r) {
+  const c = tr.insertCell(); c.style.whiteSpace = 'normal';
+  const s = document.createElement('span'); s.textContent = r.nota || ''; c.appendChild(s);
+  const b = document.createElement('button'); b.className = 'btnNota'; b.textContent = '✏️'; b.title = 'Modifica la nota';
+  b.onclick = ev => { ev.stopPropagation(); modificaNota(r); };
+  c.appendChild(b);
+}
+function modificaNota(r) {
+  $('modNotaTitolo').textContent = 'Nota di ' + r.punto + ' (' + r.ora_locale.slice(11, 16) + ')';
+  $('modNotaTesto').value = r.nota || '';
+  $('modNota').hidden = false; $('modNotaTesto').focus();
+  $('modNotaNo').onclick = () => { $('modNota').hidden = true; };
+  $('modNotaOk').onclick = () => {
+    r.nota = $('modNotaTesto').value.trim(); r.sync = false; salvaTaccuino();
+    $('modNota').hidden = true; toast('✏️ Nota di ' + r.punto + ' aggiornata');
+    aggiornaTaccuino(); sincronizza();
+  };
+}
+/* ---- foto dell'area impianto dalla scheda Punti: un rilievo per turbina
+   (codice AREA-<id turbina>), creato al primo 📷 con la posizione di quel momento */
+function rilievoTurbina(w) {
+  const cod = 'AREA-' + w.id;
+  let r = taccuino.find(x => x.punto === cod && categoriaDi(x) === 'area');
+  if (!r) {
+    const ora = new Date();
+    r = { id: ora.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
+      categoria: 'area', punto: cod, etichetta: 'Area impianto ' + w.id,
+      ora_locale: oraLocale(ora), ora_iso: ora.toISOString(),
+      lat: pos ? +pos.latitude.toFixed(7) : null, lon: pos ? +pos.longitude.toFixed(7) : null,
+      acc_m: pos && pos.accuracy != null ? Math.round(pos.accuracy) : null,
+      dist_m: pos ? Math.round(distanza(pos.latitude, pos.longitude, w.lat, w.lon)) : null,
+      az_mag: heading == null ? null : Math.round(heading),
+      az_vero: heading == null ? null : Math.round(wrap(heading + decl)), nota: '' };
+    taccuino.push(r); salvaTaccuino();
+  }
+  return r;
 }
 /* foto allegate: nel taccuino solo i NOMI dei file (per l'abbinamento in QGIS);
    le miniature per l'anteprima restano in IndexedDB su questo telefono */
@@ -726,7 +776,7 @@ async function aggiungiFoto(r, elenco) {
       lat: pos ? +pos.latitude.toFixed(7) : '', lon: pos ? +pos.longitude.toFixed(7) : '', ora: oraLocale(new Date()) }, r.id + '|' + nome));
   }
   r.foto = [...nomi]; r.sync = false; salvaTaccuino(); await scriviMini(r.id, mini);
-  aggiornaRilievi();
+  aggiornaRilievi(); aggiornaAerogeneratori();
   sincronizza();
   return n;
 }
@@ -740,7 +790,12 @@ $('fileRil').onchange = async ev => {
 // salva nei Download con un nome univoco (es. CAV-01_20261026_170512.jpg),
 // che è anche il nome usato per l'abbinamento in QGIS
 $('camRil').onchange = async ev => {
-  const r = taccuino.find(x => x.id === rilDaAllegare); const f = ev.target.files[0];
+  const f = ev.target.files[0];
+  let r;
+  if (String(rilDaAllegare).startsWith('WTG:')) {     // foto area impianto dalla scheda Punti
+    const w = (DATI.turbine || []).find(x => 'WTG:' + x.id === rilDaAllegare);
+    r = w && f ? rilievoTurbina(w) : null;
+  } else r = taccuino.find(x => x.id === rilDaAllegare);
   if (!r || !f) return;
   const d = new Date();
   const nome = r.punto + '_' + oraLocale(d).replace(/[-: ]/g, '').replace(/^(\d{8})/, '$1_') + '.jpg';
@@ -777,7 +832,8 @@ function aggiornaTaccuino() {
     const h = tb.insertRow(); ['Ora', 'Dal punto', 'Azimut', 'Nota'].forEach(t => { const th = document.createElement('th'); th.textContent = t; h.appendChild(th); });
     righe.forEach(r => {
       const tr = tb.insertRow();
-      [r.ora_locale.slice(11), r.dist_m == null ? '—' : r.dist_m + ' m', r.az_mag == null ? '—' : r.az_mag + '°', r.nota || ''].forEach(c => { tr.insertCell().textContent = c; });
+      [r.ora_locale.slice(11), r.dist_m == null ? '—' : r.dist_m + ' m', r.az_mag == null ? '—' : r.az_mag + '°'].forEach(c => { tr.insertCell().textContent = c; });
+      cellaNota(tr, r);
     });
   }
   aggiornaRilievi();
@@ -931,7 +987,7 @@ function aggiornaAerogeneratori() {
   $('contaWtg').textContent = tw.length ? tw.length + ' turbine' : '';
   tw.sort((a, b) => (a.daTe ?? 1e12) - (b.daTe ?? 1e12) || String(a.w.id).localeCompare(String(b.w.id)));
   tb.innerHTML = '';
-  const h = tb.insertRow(); ['In auto', 'Turbina', 'Da te'].forEach(x => { const th = document.createElement('th'); th.textContent = x; h.appendChild(th); });
+  const h = tb.insertRow(); ['In auto', 'Turbina', 'Da te', 'Foto area'].forEach(x => { const th = document.createElement('th'); th.textContent = x; h.appendChild(th); });
   tw.forEach(({ w, daTe }) => {
     const tr = tb.insertRow();
     const bv = document.createElement('button'); bv.className = 'btnVai';
@@ -941,6 +997,12 @@ function aggiornaAerogeneratori() {
     tr.insertCell().appendChild(bv);
     tr.insertCell().textContent = w.id;
     tr.insertCell().textContent = distTesto(daTe);
+    const cc = tr.insertCell(), bc = document.createElement('button'); bc.className = 'btnAllega';
+    const ra = taccuino.find(x => x.punto === 'AREA-' + w.id && categoriaDi(x) === 'area');
+    const nfa = ra && ra.foto ? ra.foto.length : 0;
+    bc.textContent = '📷' + (nfa ? ' ' + nfa : ''); bc.title = 'Foto dell\'area della turbina';
+    bc.onclick = () => { rilDaAllegare = 'WTG:' + w.id; $('camRil').value = ''; $('camRil').click(); };
+    cc.appendChild(bc);
   });
 }
 function aggiornaRiepilogo(forza) {

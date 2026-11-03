@@ -96,6 +96,8 @@ body.full #nav{display:none}
 .vlab{display:block;font-size:13px;color:var(--muted);margin:8px 0 3px}
 #verbaleForm{display:flex;flex-direction:column;gap:10px}
 .btnNota{padding:2px 6px;margin-left:4px;font-size:13px}
+#modMisura{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
+#modMisura .card{max-width:420px;width:100%}
 #modNota{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
 #modNota .card{max-width:420px;width:100%}
 #conferma{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
@@ -195,6 +197,15 @@ body.full #nav{display:none}
   <small>Da fare in alto, ordinati per distanza da te. Tocca una riga per selezionare il punto, ✓ per togliere la spunta (con conferma), 🚗 apre il navigatore in auto; sul pulsante tempo e km su strada dalla tua posizione (≈ = stima senza rete).</small>
 </div>
 
+<div class="card" id="cardPdr" hidden>
+  <div class="row" style="justify-content:space-between">
+    <span class="lbl">Punti da rilevare</span>
+    <span id="contaPdr" class="lbl"></span>
+  </div>
+  <div style="overflow-x:auto;margin-top:6px"><table id="tabPdr"></table></div>
+  <small>Dal layer «Punti_da_rilevare» di QGIS (interferenze, misure acustiche, area impianto). Da fare in alto, per distanza. 🚗 navigatore in auto; 📷 foto del rilievo (codice del punto, es. CAV-12); 🔊 LAeq, durata, ora di inizio e strumento. In QGIS il punto passa a «fatto» con l'import del taccuino o con «Rilievi dal Drive».</small>
+</div>
+
 <div class="card" id="cardWtg">
   <div class="row" style="justify-content:space-between">
     <span class="lbl">Aerogeneratori del progetto</span>
@@ -271,6 +282,21 @@ body.full #nav{display:none}
   <small>6. Documentazione fotografica: in QGIS, dalle foto del taccuino e degli altri rilievi (area impianto, cavidotto, acustica).</small>
 </div>
 </section>
+
+<div id="modMisura" hidden>
+  <div class="card">
+    <b id="modMisTitolo">Misura acustica</b>
+    <div class="row" style="margin-top:8px">
+      <label class="vlab" style="flex:1">LAeq dB(A)<input id="misLaeq" type="text" inputmode="decimal" style="width:100%"></label>
+      <label class="vlab" style="flex:1">Durata (min)<input id="misDurata" type="text" inputmode="numeric" style="width:100%"></label>
+      <label class="vlab" style="flex:1">Ora inizio<input id="misInizio" type="time" style="width:100%"></label>
+    </div>
+    <label class="vlab">Strumento<input id="misStrumento" type="text" style="width:100%" placeholder="es. fonometro classe 1, n. serie"></label>
+    <label class="vlab">Nota<textarea id="misNota" style="min-height:60px"></textarea></label>
+    <small>Tutti i campi sono facoltativi; lo strumento viene ricordato per le misure successive.</small>
+    <div class="row" style="margin-top:8px"><button id="modMisNo" style="flex:1">Annulla</button><button id="modMisOk" style="flex:1;background:var(--ok);color:#fff;border:0">Salva misura</button></div>
+  </div>
+</div>
 
 <div id="modNota" hidden>
   <div class="card">
@@ -632,7 +658,8 @@ const rilieviAltri = () => taccuino.filter(r => categoriaDi(r) !== 'paesaggio');
 function registraRilievo(cat) {
   const c = CATEGORIE[cat]; if (!c) return;
   const n = 1 + Math.max(0, ...taccuino.filter(r => categoriaDi(r) === cat)
-    .map(r => parseInt(String(r.punto).split('-')[1], 10) || 0));
+    .map(r => parseInt(String(r.punto).split('-')[1], 10) || 0),
+    ...daRilevare().filter(p => p.categoria === cat).map(p => parseInt(String(p.codice).split('-')[1], 10) || 0));
   const ora = new Date();
   const r = {
     id: ora.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -668,9 +695,16 @@ function aggiornaRilievi() {
     const bc = document.createElement('button'); bc.className = 'btnAllega'; bc.textContent = '📷';
     bc.onclick = () => { rilDaAllegare = r.id; $('camRil').value = ''; $('camRil').click(); };
     cf.appendChild(bc); cf.appendChild(b);
+    if (categoriaDi(r) === 'acustica') {
+      const bm = document.createElement('button'); bm.className = 'btnAllega';
+      bm.textContent = '🔊' + (r.laeq != null && r.laeq !== '' ? ' ' + r.laeq : ''); bm.title = 'Misura acustica';
+      bm.onclick = () => modificaMisura(r); cf.appendChild(bm);
+    }
     if (nf) { const m = document.createElement('div'); m.className = 'mini'; cf.appendChild(m); mostraMiniature(r.id, m); }
     [r.ora_locale.slice(8, 10) + '/' + r.ora_locale.slice(5, 7) + ' ' + r.ora_locale.slice(11, 16), r.acc_m == null ? '—' : '±' + r.acc_m + ' m'].forEach(c => { tr.insertCell().textContent = c; });
     cellaNota(tr, r);
+    const tm = testoMisura(r);
+    if (tm) { const s = document.createElement('small'); s.style.display = 'block'; s.textContent = '🔊 ' + tm; tr.lastChild.prepend(s); }
   });
 }
 /* ---- nota modificabile dopo lo scatto (✏️): il record torna da sincronizzare e
@@ -695,23 +729,102 @@ function modificaNota(r) {
 }
 /* ---- foto dell'area impianto dalla scheda Punti: un rilievo per turbina
    (codice AREA-<id turbina>), creato al primo 📷 con la posizione di quel momento */
-function rilievoTurbina(w) {
-  const cod = 'AREA-' + w.id;
-  let r = taccuino.find(x => x.punto === cod && categoriaDi(x) === 'area');
+const rilievoTurbina = w => rilievoDi('AREA-' + w.id, 'area', 'Area impianto ' + w.id, w.lat, w.lon);
+/* ---- punti da rilevare: layer "Punti_da_rilevare" di QGIS (DATI.da_rilevare:
+   id, codice, nome, categoria, nota, lat, lon). Il codice (es. CAV-12) lo
+   calcola il plugin ed è il "punto" del rilievo creato con 📷 o 🔊: al rientro
+   QGIS segna il punto come fatto. */
+const daRilevare = () => ((DATI && DATI.da_rilevare) || []).filter(p => CATEGORIE[p.categoria] && p.lat != null);
+function rilievoDi(cod, cat, etichetta, tlat, tlon) {
+  let r = taccuino.find(x => x.punto === cod && categoriaDi(x) === cat);
   if (!r) {
     const ora = new Date();
     r = { id: ora.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
-      categoria: 'area', punto: cod, etichetta: 'Area impianto ' + w.id,
+      categoria: cat, punto: cod, etichetta: etichetta,
       ora_locale: oraLocale(ora), ora_iso: ora.toISOString(),
       lat: pos ? +pos.latitude.toFixed(7) : null, lon: pos ? +pos.longitude.toFixed(7) : null,
       acc_m: pos && pos.accuracy != null ? Math.round(pos.accuracy) : null,
-      dist_m: pos ? Math.round(distanza(pos.latitude, pos.longitude, w.lat, w.lon)) : null,
+      dist_m: pos && tlat != null ? Math.round(distanza(pos.latitude, pos.longitude, tlat, tlon)) : null,
       az_mag: heading == null ? null : Math.round(heading),
       az_vero: heading == null ? null : Math.round(wrap(heading + decl)), nota: '' };
     taccuino.push(r); salvaTaccuino();
   }
   return r;
 }
+const rilievoPdr = p => rilievoDi(p.codice, p.categoria, p.nome || CATEGORIE[p.categoria].nome, p.lat, p.lon);
+function aggiornaDaRilevare() {
+  const tb = $('tabPdr'); if (!tb) return 0;
+  const lista = daRilevare().map(p => {
+    const r = taccuino.find(x => x.punto === p.codice && categoriaDi(x) === p.categoria);
+    return { p, r, daTe: pos ? distanza(pos.latitude, pos.longitude, p.lat, p.lon) : null };
+  });
+  $('cardPdr').hidden = !lista.length;
+  const fatti = lista.filter(x => x.r).length;
+  $('contaPdr').textContent = lista.length ? fatti + ' fatti · ' + (lista.length - fatti) + ' da fare' : '';
+  lista.sort((a, b) => (!!a.r - !!b.r) || (a.daTe ?? 1e12) - (b.daTe ?? 1e12));
+  tb.innerHTML = '';
+  const h = tb.insertRow(); ['', 'In auto', 'Punto', 'Da te', 'Rilievo'].forEach(x => { const th = document.createElement('th'); th.textContent = x; h.appendChild(th); });
+  lista.forEach(({ p, r, daTe }) => {
+    const tr = tb.insertRow(), c = CATEGORIE[p.categoria];
+    const c0 = tr.insertCell(); c0.className = r ? 'st-ok' : 'st-no'; c0.textContent = r ? '✓' : '○';
+    const bv = document.createElement('button'); bv.className = 'btnVai';
+    const a = tempiAuto['PDR:' + p.codice];
+    bv.innerHTML = a ? '🚗 ' + (a.stima ? '≈' : '') + durataTesto(a.s) + '<small>' + distTesto(a.m) + '</small>' : '🚗 Vai';
+    bv.onclick = () => vaiA(p);
+    tr.insertCell().appendChild(bv);
+    const cp = tr.insertCell(); cp.style.whiteSpace = 'normal';
+    const b = document.createElement('b'); b.textContent = p.codice; b.style.color = c.colore; cp.appendChild(b);
+    if (p.nome) cp.appendChild(document.createTextNode(' ' + p.nome));
+    if (p.nota) { const s = document.createElement('small'); s.style.display = 'block'; s.textContent = p.nota; cp.appendChild(s); }
+    tr.insertCell().textContent = distTesto(daTe);
+    const cr = tr.insertCell();
+    const bc = document.createElement('button'); bc.className = 'btnAllega';
+    const nf = r && r.foto ? r.foto.length : 0;
+    bc.textContent = '📷' + (nf ? ' ' + nf : ''); bc.title = 'Foto del rilievo';
+    bc.onclick = () => { rilDaAllegare = 'PDR:' + p.codice; $('camRil').value = ''; $('camRil').click(); };
+    cr.appendChild(bc);
+    if (p.categoria === 'acustica') {
+      const bm = document.createElement('button'); bm.className = 'btnAllega';
+      bm.textContent = '🔊' + (r && r.laeq != null && r.laeq !== '' ? ' ' + r.laeq : ''); bm.title = 'Misura acustica';
+      bm.onclick = () => modificaMisura(rilievoPdr(p));
+      cr.appendChild(bm);
+    }
+  });
+  return lista.length - fatti;
+}
+/* ---- misura acustica: LAeq, durata, ora di inizio, strumento (tutti facoltativi) */
+function testoMisura(r) {
+  const t = [];
+  if (r.laeq != null && r.laeq !== '') t.push('LAeq ' + r.laeq + ' dB(A)');
+  if (r.durata_min) t.push(r.durata_min + ' min');
+  if (r.inizio) t.push('dalle ' + r.inizio);
+  if (r.strumento) t.push(r.strumento);
+  return t.join(' · ');
+}
+function modificaMisura(r) {
+  $('modMisTitolo').textContent = 'Misura acustica ' + r.punto;
+  let str = ''; try { str = localStorage.getItem('mirino_strumento') || ''; } catch (e) {}
+  $('misLaeq').value = r.laeq ?? '';
+  $('misDurata').value = r.durata_min ?? '';
+  $('misInizio').value = r.inizio || oraLocale(new Date()).slice(11, 16);
+  $('misStrumento').value = r.strumento || str;
+  $('misNota').value = r.nota || '';
+  $('modMisura').hidden = false;
+  $('modMisNo').onclick = () => { $('modMisura').hidden = true; };
+  $('modMisOk').onclick = () => {
+    const num = (v, dec) => { v = String(v).replace(',', '.').trim(); if (v === '') return null; const n = +v; return isFinite(n) ? (dec ? Math.round(n * 10) / 10 : Math.round(n)) : null; };
+    r.laeq = num($('misLaeq').value, true);
+    r.durata_min = num($('misDurata').value, false);
+    r.inizio = $('misInizio').value || '';
+    r.strumento = $('misStrumento').value.trim();
+    r.nota = $('misNota').value.trim();
+    if (r.strumento) { try { localStorage.setItem('mirino_strumento', r.strumento); } catch (e) {} }
+    r.sync = false; salvaTaccuino();
+    $('modMisura').hidden = true; toast('🔊 Misura ' + r.punto + ' salvata');
+    aggiornaTaccuino(); sincronizza();
+  };
+}
+
 /* foto allegate: nel taccuino solo i NOMI dei file (per l'abbinamento in QGIS);
    le miniature per l'anteprima restano in IndexedDB su questo telefono */
 let rilDaAllegare = null;
@@ -798,7 +911,7 @@ async function aggiungiFoto(r, elenco) {
       lat: pos ? +pos.latitude.toFixed(7) : '', lon: pos ? +pos.longitude.toFixed(7) : '', ora: oraLocale(new Date()) }, r.id + '|' + nome));
   }
   r.foto = [...nomi]; r.sync = false; salvaTaccuino(); await scriviMini(r.id, mini);
-  aggiornaRilievi(); aggiornaAerogeneratori();
+  aggiornaRilievi(); aggiornaAerogeneratori(); aggiornaDaRilevare();
   sincronizza();
   return n;
 }
@@ -817,6 +930,9 @@ $('camRil').onchange = async ev => {
   if (String(rilDaAllegare).startsWith('WTG:')) {     // foto area impianto dalla scheda Punti
     const w = (DATI.turbine || []).find(x => 'WTG:' + x.id === rilDaAllegare);
     r = w && f ? rilievoTurbina(w) : null;
+  } else if (String(rilDaAllegare).startsWith('PDR:')) {   // punto da rilevare dalla scheda Punti
+    const p = daRilevare().find(x => 'PDR:' + x.codice === rilDaAllegare);
+    r = p && f ? rilievoPdr(p) : null;
   } else r = taccuino.find(x => x.id === rilDaAllegare);
   if (!r || !f) return;
   const d = new Date();
@@ -1106,6 +1222,7 @@ function durataTesto(s) {
 // destinazioni per il navigatore: punti di scatto e aerogeneratori (chiave 'WTG:<id>')
 function destinazioni() {
   return DATI.punti.map(p => ({ k: p.id, lat: p.lat, lon: p.lon }))
+    .concat(daRilevare().map(p => ({ k: 'PDR:' + p.codice, lat: p.lat, lon: p.lon })))
     .concat((DATI.turbine || []).map(w => ({ k: 'WTG:' + w.id, lat: w.lat, lon: w.lon })))
     .slice(0, 99);                    // limite del servizio OSRM pubblico
 }
@@ -1180,6 +1297,7 @@ function aggiornaRiepilogo(forza) {
   if (!forza && ora - ultimoRiep < 5000) return;     // le distanze cambiano col GPS: ogni 5 s basta
   ultimoRiep = ora;
   aggiornaAerogeneratori();
+  const pdrDaFare = aggiornaDaRilevare();
   const righe = DATI.punti.map((p, i) => {
     const sc = taccuino.filter(r => r.punto === p.id);
     const ult = sc[sc.length - 1];
@@ -1188,7 +1306,7 @@ function aggiornaRiepilogo(forza) {
   });
   const fatti = righe.filter(r => r.n).length;
   $('contaRiep').textContent = fatti + ' fatti · ' + (righe.length - fatti) + ' da fare';
-  $('badgePunti').textContent = righe.length - fatti ? String(righe.length - fatti) : '';
+  $('badgePunti').textContent = righe.length - fatti + pdrDaFare ? String(righe.length - fatti + pdrDaFare) : '';
   righe.sort((a, b) => (a.n > 0) - (b.n > 0) ||
     (a.n ? (b.ult.ora_iso || '').localeCompare(a.ult.ora_iso || '') : (a.daTe ?? 1e12) - (b.daTe ?? 1e12)));
   const tb = $('riep'); tb.innerHTML = '';
@@ -1334,6 +1452,11 @@ function disegnaMappa(inquadra) {
       L.circleMarker([r.lat, r.lon], { radius: 4, color: '#1a8f3c', weight: 2, fillOpacity: 0 }).bindTooltip('Scatto ' + r.ora_locale.slice(11)).addTo(gruppo));
     if (inquadra) mappa.setView([punto.lat, punto.lon], 15);
   }
+  daRilevare().forEach(p => {
+    const fatto = taccuino.some(r => r.punto === p.codice && categoriaDi(r) === p.categoria), col = CATEGORIE[p.categoria].colore;
+    L.circleMarker([p.lat, p.lon], { radius: 7, color: col, weight: 3, fillColor: fatto ? col : '#fff', fillOpacity: fatto ? .5 : .9 })
+      .bindTooltip(p.codice + (p.nome ? ' ' + p.nome : '') + (fatto ? ' ✓' : ' (da rilevare)')).addTo(gruppo);
+  });
   rilieviAltri().filter(r => r.lat != null).forEach(r =>
     L.circleMarker([r.lat, r.lon], { radius: 6, color: '#fff', weight: 2, fillColor: CATEGORIE[categoriaDi(r)].colore, fillOpacity: 1 })
       .bindTooltip(r.punto + ' ' + r.ora_locale.slice(11, 16) + (r.nota ? ' – ' + r.nota : '')).addTo(gruppo));

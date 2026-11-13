@@ -77,6 +77,7 @@ textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(
 #riep td,#riep th{white-space:nowrap}
 #riep tr.sel td{background:var(--cone)}
 #riep tr[data-i]{cursor:pointer}
+.btnAR{background:#0f766e;color:#fff;border:0;border-radius:8px;padding:6px 10px;font-weight:700;line-height:1.15;margin-left:4px}
 .btnVai{background:#1a73e8;color:#fff;border:0;border-radius:8px;padding:6px 10px;font-weight:700;line-height:1.15}
 .btnVai small{display:block;font-weight:400;font-size:11px;color:#fff;opacity:.9}
 .st-ok{color:var(--ok);font-weight:700}.st-no{color:var(--warn);font-weight:700}
@@ -174,6 +175,7 @@ body.full #nav{display:none}
 <div class="row">
   <button id="btnFoto3" class="btnFoto" style="flex:1">📷 Foto fatta</button>
   <button id="btnVai" class="btnVai" title="Navigatore Google Maps verso il punto">🚗 Vai</button>
+  <button id="btnAR" class="btnAR" title="Zefiro AR: le turbine di progetto sulla fotocamera da questo punto">🔭 AR</button>
 </div>
 <div id="ultimoScatto" class="lbl"></div>
 </section>
@@ -194,7 +196,8 @@ body.full #nav{display:none}
     <span id="contaRiep" class="lbl"></span>
   </div>
   <div style="overflow-x:auto;margin-top:6px"><table id="riep"></table></div>
-  <small>Da fare in alto, ordinati per distanza da te. Tocca una riga per selezionare il punto, ✓ per togliere la spunta (con conferma), 🚗 apre il navigatore in auto; sul pulsante tempo e km su strada dalla tua posizione (≈ = stima senza rete).</small>
+  <small>Da fare in alto, ordinati per distanza da te. Tocca una riga per selezionare il punto, ✓ per togliere la spunta (con conferma), 🚗 apre il navigatore in auto; sul pulsante tempo e km su strada dalla tua posizione (≈ = stima senza rete). 🔭 apre Zefiro AR su quel punto.</small>
+  <div class="row" style="margin-top:6px"><button id="btnARgps" class="btnAR" style="margin-left:0">🔭 Vedi in AR dalla mia posizione (GPS)</button></div>
 </div>
 
 <div class="card" id="cardPdr" hidden>
@@ -1211,6 +1214,8 @@ function vaiA(p) {
   window.open(url, '_blank');
 }
 $('btnVai').onclick = () => vaiA(punto);
+$('btnAR').onclick = () => apriAR(punto ? punto.id : 'gps');
+$('btnARgps').onclick = () => apriAR('gps');
 
 /* ---- tempo di percorrenza in auto (OSRM, strade OpenStreetMap) ---------- */
 const tempiAuto = {};          // id punto -> {s: secondi, m: metri, stima: bool}
@@ -1325,6 +1330,9 @@ function aggiornaRiepilogo(forza) {
     bv.className = 'btnVai'; const a = tempiAuto[r.p.id];
     bv.innerHTML = a ? '🚗 ' + (a.stima ? '≈' : '') + durataTesto(a.s) + '<small>' + distTesto(a.m) + '</small>' : '🚗 Vai';
     bv.onclick = ev => { ev.stopPropagation(); vaiA(r.p); }; cv.appendChild(bv);
+    const ba = document.createElement('button'); ba.className = 'btnAR'; ba.textContent = '🔭';
+    ba.title = 'Vedi in AR (Zefiro AR) da ' + r.p.id;
+    ba.onclick = ev => { ev.stopPropagation(); apriAR(r.p.id); }; cv.appendChild(ba);
     tr.insertCell().textContent = r.p.id + ' - ' + r.p.etichetta;
     const c2 = tr.insertCell(); c2.textContent = r.n ? 'fatto' : 'da fare'; c2.className = r.n ? 'st-ok' : 'st-no';
     tr.insertCell().textContent = r.n || '';
@@ -1334,6 +1342,20 @@ function aggiornaRiepilogo(forza) {
   });
 }
 setInterval(() => aggiornaRiepilogo(false), 5000);
+
+/* ---- Zefiro AR (web app a parte, stesso sito github.io): legge i dati del
+   progetto da localStorage 'mirino_dati' e la configurazione del Drive da
+   'mirino_cloud'; senza il blocco 'terreno' scarica il progetto dal Drive.
+   punto = id del Punto di Scatto, oppure 'gps' (posizione attuale). */
+const URL_AR = 'https://diegodebenedittis.github.io/zefiro-ar/';
+function apriAR(idPunto) {
+  if (!DATI) { toast('Carica prima il progetto'); return; }
+  try { localStorage.setItem('mirino_dati', JSON.stringify(DATI)); } catch (e) {}   // dati incorporati o troppo grandi: AR li prende dal Drive
+  const u = URL_AR + '?da=mirino&punto=' + encodeURIComponent(idPunto) +
+    '&progetto=' + encodeURIComponent(DATI.progetto || '');
+  const w = window.open(u, '_blank');
+  if (!w) location.href = u;
+}
 
 /* ---- salvataggio online (Google Fogli via Apps Script) ------------------ */
 // Ogni scatto viene inviato all'app web Apps Script dell'utente, che lo
